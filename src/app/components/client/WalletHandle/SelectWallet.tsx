@@ -4,7 +4,7 @@ import { useFrontendProvider } from "../provider/providerContext";
 import { useEffect, useState } from "react";
 import { walletV6, validateAndParseAddress, constants as SNconstants, WalletAccountV6 } from "starknet";
 import { WALLET_API } from "@starknet-io/types-js";
-import { myFrontendProviders } from "@/utils/constants";
+import { isStrk20Api, myFrontendProviders } from "@/utils/constants";
 import { createStore, type Store } from "@starknet-io/get-starknet-discovery";
 import type { WalletWithStarknetFeatures } from "@starknet-io/get-starknet-wallet-standard/features";
 
@@ -15,7 +15,6 @@ function normalizeId(s: string): string {
 export default function SelectWallet({ variant = "ctaBig" }: { variant?: "nav" | "ctaBig" }) {
   const setMyWallet = useStoreWallet((state) => state.setMyStarknetWalletObject);
   const setMyWalletAccount = useStoreWallet((state) => state.setMyWalletAccount);
-  const myFrontendProviderIndex = useFrontendProvider((state) => state.currentFrontendProviderIndex);
   const { setCurrentFrontendProviderIndex } = useFrontendProvider((state) => state);
   const isConnected = useStoreWallet((state) => state.isConnected);
   const setConnected = useStoreWallet((state) => state.setConnected);
@@ -23,6 +22,7 @@ export default function SelectWallet({ variant = "ctaBig" }: { variant?: "nav" |
   const setWalletApi = useStoreWallet((state) => state.setWalletApiList);
   const setChain = useStoreWallet((state) => state.setChain);
   const setAddressAccount = useStoreWallet((state) => state.setAddressAccount);
+  const setPrivacyCapable = useStoreWallet((state) => state.setPrivacyCapable);
 
   const [connecting, setConnecting] = useState(false);
   const [error, setError] = useState("");
@@ -43,23 +43,34 @@ export default function SelectWallet({ variant = "ctaBig" }: { variant?: "nav" |
 
   async function handleSelectedWallet(selectedWallet: WalletWithStarknetFeatures) {
     setMyWallet(selectedWallet);
-    const myWA = await WalletAccountV6.connect(myFrontendProviders[2], selectedWallet);
-    setMyWalletAccount(myWA);
-    const result = await walletV6.requestAccounts(selectedWallet);
+    // get-starknet 6.0.3 and starknet@10.4.0 ship sibling copies of this type.
+    const w = selectedWallet as never;
+    const result = await walletV6.requestAccounts(w);
     if (typeof result == "string") return;
     if (Array.isArray(result)) {
       setAddressAccount(validateAndParseAddress(result[0]));
     }
     const isConnectedWallet: boolean = await walletV6
-      .getPermissions(selectedWallet)
+      .getPermissions(w)
       .then((res: any) => (res as WALLET_API.Permission[]).includes(WALLET_API.Permission.ACCOUNTS));
     setConnected(isConnectedWallet);
-    if (isConnectedWallet) {
-      const chainId = (await walletV6.requestChainId(selectedWallet)) as string;
-      setChain(chainId);
-      setCurrentFrontendProviderIndex(chainId === SNconstants.StarknetChainId.SN_MAIN ? 0 : 2);
+    const chainId = (await walletV6.requestChainId(w)) as string;
+    setChain(chainId);
+    const idx = chainId === SNconstants.StarknetChainId.SN_MAIN ? 0 : 2;
+    setCurrentFrontendProviderIndex(idx);
+    const myWA = await WalletAccountV6.connect(myFrontendProviders[idx], w);
+    setMyWalletAccount(myWA);
+    let versions: string[] = [];
+    const wv = walletV6 as typeof walletV6 & {
+      supportedWalletApi?: (wallet: never) => Promise<string[]>;
+    };
+    if (typeof wv.supportedWalletApi === "function") {
+      versions = await wv.supportedWalletApi(w);
+    } else {
+      versions = await walletV6.supportedSpecs(w);
     }
-    setWalletApi(await walletV6.supportedSpecs(selectedWallet));
+    setWalletApi(versions);
+    setPrivacyCapable(isStrk20Api(versions));
   }
 
   async function selectWallet(w: WalletWithStarknetFeatures) {
@@ -111,7 +122,14 @@ export default function SelectWallet({ variant = "ctaBig" }: { variant?: "nav" |
   if (variant === "nav") {
     if (isConnected && address) {
       return (
-        <button className="addr-pill" onClick={() => setConnected(false)} title="Disconnect">
+        <button
+          className="addr-pill"
+          onClick={() => {
+            setConnected(false);
+            setPrivacyCapable(false);
+          }}
+          title="Disconnect"
+        >
           <span className="addr-dot" />
           {shortAddr}
           <span className="addr-x">×</span>

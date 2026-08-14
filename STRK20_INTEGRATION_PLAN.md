@@ -47,9 +47,9 @@ Honest limits: a shield is never quiet. Distinctive amounts and rapid in-and-out
 - Capability detect: `walletV6.supportedWalletApi` / `supportedSpecs` ≥ 0.10 — **never** `strk20Balances([])` for feature-detect
 - Do not use the SDK in the browser
 
-## 5. Phase 1 — first shielded flow (buildable now)
+## 5. Phase 1 — first shielded flow ✅ done 2026-08-15
 
-Status: not started
+Status: done 2026-08-15
 
 1. Pin get-starknet `6.0.3` in `package.json`.
 2. Default network to mainnet in `providerContext.ts` (sprint is mainnet-only). Keep Sepolia as a switch, not the default.
@@ -95,7 +95,7 @@ Status: not started
 
 ## 10. Open items to re-verify at build time
 
-- get-starknet 6.0.3 vs 6.0.2 in our lockfile
+- get-starknet 6.0.3 vs 6.0.2 in our lockfile — **pinned 6.0.3**; types-js copies inside `starknet@10.4.0` disagree, so wallet objects are cast at the WalletAccountV6 boundary
 - Xverse dapp Wallet API
 - Wallet API sub-account method (still absent in types-js 0.10.3)
 - `get_fee_amount` live value

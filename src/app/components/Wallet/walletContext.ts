@@ -27,7 +27,8 @@ export interface WalletState {
     setWalletApiList: (version: string[]) => void,
     selectedApiVersion: string,
     setSelectedApiVersion: (version: string) => void,
-
+    privacyCapable: boolean,
+    setPrivacyCapable: (ok: boolean) => void,
 }
 
 export const useStoreWallet = create<WalletState>()(set => ({
@@ -51,4 +52,6 @@ export const useStoreWallet = create<WalletState>()(set => ({
     setWalletApiList: (walletApi: string[]) => { set(state => ({ walletApiList: walletApi })) },
     selectedApiVersion: "default",
     setSelectedApiVersion: (selectedApiVersion: string) => { set(state => ({ selectedApiVersion })) },
+    privacyCapable: false,
+    setPrivacyCapable: (privacyCapable: boolean) => { set(state => ({ privacyCapable })) },
     }));

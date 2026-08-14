@@ -11,6 +11,7 @@ import { useStoreWallet } from "../components/Wallet/walletContext";
 import { fmtToken, parseToken } from "@/lib/format";
 import { errorResult, hexAmt, submitStrk20, type ActionResult } from "@/lib/strk20";
 import * as constants from "@/utils/constants";
+import { sameAddr } from "@/utils/constants";
 
 type Tab = "shield" | "send" | "unshield" | "balances";
 
@@ -20,6 +21,7 @@ export default function VaultPage() {
   const account = useStoreWallet((s) => s.myWalletAccount);
   const address = useStoreWallet((s) => s.address);
   const connected = useStoreWallet((s) => s.isConnected);
+  const privacyCapable = useStoreWallet((s) => s.privacyCapable);
 
   const [tab, setTab] = useState<Tab>("shield");
   const [amount, setAmount] = useState("1");
@@ -35,7 +37,7 @@ export default function VaultPage() {
         const raw: any = await account?.strk20Balances([]);
         const arr = Array.isArray(raw) ? raw : raw?.value ?? [];
         if (!arr.length) {
-          setResult({ status: "ok", title: "No shielded notes", note: "Shield STRK before you list or bid." });
+          setResult({ status: "ok", title: "No shielded notes", note: "Shield STRK first. That deposit is a public edge." });
           return;
         }
         setResult({
@@ -47,7 +49,7 @@ export default function VaultPage() {
             const label =
               (() => {
                 try {
-                  return num.toBigInt(token) === num.toBigInt(constants.addrSTRK) ? "STRK" : String(token).slice(0, 10);
+                  return sameAddr(token, constants.addrSTRK) ? "STRK" : String(token).slice(0, 10);
                 } catch {
                   return "token";
                 }
@@ -96,9 +98,13 @@ export default function VaultPage() {
       </div>
 
       <p style={{ color: "var(--text-2)", maxWidth: 560, marginBottom: 28, lineHeight: 1.55 }}>
-        The vault is the public edge of the pool. Deposits and withdrawals show
-        an address and an amount. Transfers inside the pool do not. Auction
-        actions spend these notes.
+        Shield and unshield are public ERC-20 legs: address, token, amount, and
+        time. A private send hides who paid whom. Ready must support Wallet API
+        0.10+. See{" "}
+        <a href="https://strk20-by-example.org/what-is-strk20" target="_blank" rel="noreferrer" style={{ color: "var(--accent)" }}>
+          what STRK20 hides
+        </a>
+        .
       </p>
 
       <div style={{ display: "flex", gap: 8, marginBottom: 24, flexWrap: "wrap" }}>
@@ -126,9 +132,25 @@ export default function VaultPage() {
             <input value={recipient} onChange={(e) => setRecipient(e.target.value)} placeholder={address || "0x…"} />
           </label>
         )}
+        {connected && !privacyCapable && (
+          <p className="warn">
+            This wallet does not advertise Wallet API 0.10 (STRK20). Install{" "}
+            <a href="https://www.ready.co/" target="_blank" rel="noreferrer">
+              Ready
+            </a>{" "}
+            and try again. We do not probe balances to detect support.
+          </p>
+        )}
+        {tab === "shield" && privacyCapable && (
+          <p className="warn">
+            Shield is two wallet prompts: first the public ERC-20 approve, then
+            the deposit. That is the protocol, not a duplicate bug. A screening
+            decline is a pool outcome, not an app crash.
+          </p>
+        )}
         {connected ? (
-          <button className="btn btn-primary" disabled={!network} onClick={go}>
-            {tab === "balances" ? "Read notes" : tab}
+          <button className="btn btn-primary" disabled={!network || !privacyCapable} onClick={go}>
+            {tab === "balances" ? "Read notes" : tab === "shield" ? "Approve, then shield" : tab}
           </button>
         ) : (
           <SelectWallet />

@@ -37,6 +37,12 @@ export function tenderHelperForIndex(index: number): string {
   return "0x0";
 }
 
+/** Leftover starter-kit names — unused by Lens vault. */
+export const Strk20EchoHelperClassHash = "0x0";
+export function echoHelperForIndex(index: number): string {
+  return tenderHelperForIndex(index);
+}
+
 export const Strk20Networks: Record<number, string> = { 0: "MAINNET", 2: "SEPOLIA" };
 
 export const OP = {
@@ -60,3 +66,24 @@ export const EXPLORER = {
   0: "https://voyager.online",
   2: "https://sepolia.voyager.online",
 } as const;
+
+export const POOL_MAINNET =
+  "0x040337b1af3c663e86e333bab5a4b28da8d4652a15a69beee2b677776ffe812a";
+
+export function sameAddr(a?: string, b?: string): boolean {
+  if (!a || !b) return false;
+  try {
+    return BigInt(a) === BigInt(b);
+  } catch {
+    return a.toLowerCase() === b.toLowerCase();
+  }
+}
+
+/** Wallet API >= 0.10 is STRK20-capable. Never probe balances to detect this. */
+export function isStrk20Api(versions: string[]): boolean {
+  return versions.some((v) => {
+    const m = String(v).match(/(\d+)\.(\d+)/);
+    if (!m) return false;
+    return Number(m[1]) > 0 || Number(m[2]) >= 10;
+  });
+}

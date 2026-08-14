@@ -44,10 +44,14 @@ export async function submitStrk20(opts: {
   });
   const provider = constants.myFrontendProviders[networkIndex];
   try {
-    const txR: any = await provider.waitForTransaction(txH, {
-      retries: 400,
+    const wait = provider.waitForTransaction(txH, {
+      retries: 30,
       retryInterval: 3000,
     });
+    const timeout = new Promise((_, reject) =>
+      setTimeout(() => reject(new Error("WAIT_CEILING")), 90_000)
+    );
+    const txR: any = await Promise.race([wait, timeout]);
     const r = txR?.value ?? txR;
     const reverted = r?.execution_status === "REVERTED";
     onUpdate({
@@ -60,11 +64,14 @@ export async function submitStrk20(opts: {
       ],
     });
   } catch (error: any) {
+    const ceiling = String(error?.message ?? error).includes("WAIT_CEILING");
     onUpdate({
-      status: "error",
-      title: "Could not confirm transaction",
+      status: ceiling ? "ok" : "error",
+      title: ceiling ? "Submitted — check the explorer if the receipt is slow" : "Could not confirm transaction",
       rows: [{ label: "Transaction", value: txH.slice(0, 10) + "…", hash: txH }],
-      note: error?.message ?? String(error),
+      note: ceiling
+        ? "Paymaster-relayed pool txs can take a while to show up on the RPC. The hash is live."
+        : error?.message ?? String(error),
     });
   }
   return txH;
