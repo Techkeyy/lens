@@ -10,19 +10,19 @@ Lens does not claim otherwise. It does not invent a global anonymity-set size.
 
 ## Per action
 
-### Shield — grade never `quiet`
+### Shield: grade never `quiet`
 
 | Hidden | Visible |
 | --- | --- |
 | Later use of the notes | Depositor address, token, amount |
 
-### Private transfer — only this can be `quiet`
+### Private transfer: only this can be `quiet`
 
 | Hidden | Visible |
 | --- | --- |
 | Sender, recipient, token, amount, notes | That the pool was used, and when |
 
-### Unshield — grade never `quiet`
+### Unshield: grade never `quiet`
 
 | Hidden | Visible |
 | --- | --- |

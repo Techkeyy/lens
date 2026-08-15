@@ -1,4 +1,18 @@
 import Link from "next/link";
+import LeakSheet from "./components/LeakSheet";
+import RevealHeading from "./components/RevealHeading";
+import { decide } from "@/core/decide";
+import { loadFixture } from "@/core/fixture";
+import { addrSTRK } from "@/utils/constants";
+
+const fixture = loadFixture();
+const cashOut = fixture.find((e) => e.kind === "unshield") ?? fixture[0];
+const fixtureScore = decide(fixture, {
+  kind: "unshield",
+  token: cashOut?.token ?? addrSTRK,
+  amount: cashOut?.amount ?? 10n ** 19n,
+  at: cashOut?.timestamp,
+});
 
 export default function Home() {
   return (
@@ -22,21 +36,33 @@ export default function Home() {
       </header>
 
       <section className="band band-alt" id="why">
-        <div className="band-inner">
-          <p className="kicker">Why it exists</p>
-          <h2>Most privacy mistakes happen after someone already believed they were hidden.</h2>
-          <p className="lead">
-            Deposits and withdrawals publish address, token, amount, and time.
-            Distinctive amounts and a fast in and out weaken the set. Lens writes
-            that next to the button.
-          </p>
+        <div className="band-inner split">
+          <div>
+            <p className="kicker">Why it exists</p>
+            <RevealHeading>Most privacy mistakes happen after someone already believed they were hidden.</RevealHeading>
+            <p className="lead">
+              Deposits and withdrawals publish address, token, amount, and time.
+              Distinctive amounts and a fast in and out weaken the set. Lens writes
+              that next to the button.
+            </p>
+          </div>
+          <article className="console fixture-card">
+            <p className="kicker">Committed fixture</p>
+            <p className={`receipt-head ${fixtureScore.grade}`}>{fixtureScore.grade.toUpperCase()}</p>
+            <p className="muted">
+              10 STRK in, then the same 10 STRK out three minutes later. This is
+              the official rapid in-and-out pattern, scored by the same function
+              the vault uses.
+            </p>
+            <LeakSheet score={fixtureScore} />
+          </article>
         </div>
       </section>
 
       <section className="band" id="how">
         <div className="band-inner">
           <p className="kicker">How it works</p>
-          <h2>Look back. Look ahead. Take the quieter path.</h2>
+          <RevealHeading>Look back. Look ahead. Take the quieter path.</RevealHeading>
           <ol className="steps">
             <li className="step">
               <span className="step-n">01</span>

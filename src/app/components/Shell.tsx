@@ -28,7 +28,15 @@ export default function Shell({ children }: { children: React.ReactNode }) {
             </Link>
           ))}
         </div>
-        <div className="nav-right">{home ? null : <SelectWallet variant="nav" />}</div>
+        <div className="nav-right">
+          {home ? (
+            <Link href="/vault" className="btn btn-primary">
+              Score this next action
+            </Link>
+          ) : (
+            <SelectWallet variant="nav" />
+          )}
+        </div>
       </nav>
       <main id="main">{children}</main>
       <footer className="footer">
