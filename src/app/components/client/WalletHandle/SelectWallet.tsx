@@ -36,6 +36,15 @@ export default function SelectWallet({ variant = "ctaBig" }: { variant?: "nav" |
     return () => unsub();
   }, []);
 
+  useEffect(() => {
+    if (!pickerOpen) return;
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "Escape" && !connecting) setPickerOpen(false);
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [pickerOpen, connecting]);
+
   const pickable = wallets.filter((w) => {
     const id = normalizeId(w.name);
     return !id.includes("metamask") && !id.includes("braavos");
@@ -90,9 +99,17 @@ export default function SelectWallet({ variant = "ctaBig" }: { variant?: "nav" |
 
   const picker = pickerOpen ? (
     <div className="modal-overlay" onClick={() => !connecting && setPickerOpen(false)}>
-      <div className="modal" onClick={(e) => e.stopPropagation()}>
+      <div
+        className="modal"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="wallet-picker-title"
+        onClick={(e) => e.stopPropagation()}
+      >
         <div className="modal-head">
-          <span className="modal-title">Connect</span>
+          <span className="modal-title" id="wallet-picker-title">
+            Connect Ready
+          </span>
           <button className="modal-close" onClick={() => setPickerOpen(false)} aria-label="Close" disabled={connecting}>
             ×
           </button>

@@ -14,7 +14,10 @@ export default function Shell({ children }: { children: React.ReactNode }) {
   const home = path === "/";
   return (
     <div className="shell">
-      <nav className="nav">
+      <a className="skip-link" href="#main">
+        Skip to content
+      </a>
+      <nav className="nav" aria-label="Primary">
         <Link href="/" className="brand">
           Lens
         </Link>
@@ -25,17 +28,9 @@ export default function Shell({ children }: { children: React.ReactNode }) {
             </Link>
           ))}
         </div>
-        <div className="nav-right">
-          {home ? (
-            <Link href="/vault" className="btn btn-primary">
-              Open vault
-            </Link>
-          ) : (
-            <SelectWallet variant="nav" />
-          )}
-        </div>
+        <div className="nav-right">{home ? null : <SelectWallet variant="nav" />}</div>
       </nav>
-      {children}
+      <main id="main">{children}</main>
       <footer className="footer">
         <span>Lens. Privacy briefing for STRK20.</span>
         <span>

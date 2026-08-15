@@ -175,143 +175,145 @@ export default function VaultPage() {
   return (
     <div className="page">
       <div className="page-head">
-        <div>
-          <p className="kicker">{network ?? "Switch to Mainnet"} · STRK20 pool</p>
-          <h1>Vault</h1>
-        </div>
+        <p className="kicker">{network ?? "Switch to Mainnet"} · STRK20 pool</p>
+        <h1>Vault</h1>
       </div>
       <div className="console">
-
-      <section style={{ marginBottom: 40 }}>
-        <p className="kicker">Look back</p>
-        <h2 style={{ fontFamily: "var(--font-serif)", fontWeight: 400, fontSize: 32, margin: "8px 0 12px" }}>
-          What this address already leaked
-        </h2>
-        {loadingLook && <p style={{ color: "var(--text-3)" }}>Reading Deposit / Withdrawal events…</p>}
-        {lookErr && <p className="warn">Live fetch failed. Showing the offline fixture. {lookErr}</p>}
-        {lookSource === "fixture" && !lookErr && <p className="warn">Offline fixture (demo pair).</p>}
-        {!address && <p style={{ color: "var(--text-3)" }}>Connect Ready to scan your public edges.</p>}
-        {address && !loadingLook && (
-          <>
-            <p className="num" style={{ color: "var(--text-2)", marginBottom: 12 }}>
-              {edges.length} public edge{edges.length === 1 ? "" : "s"} · source {lookSource}
-            </p>
-            <ul style={{ color: "var(--text-2)", fontSize: 14, lineHeight: 1.6, paddingLeft: 18 }}>
-              {historyFindings.slice(0, 6).map((f) => (
-                <li key={f.id + f.title}>
-                  <strong style={{ color: "var(--text-1)" }}>{f.title}.</strong> {f.detail}
-                </li>
-              ))}
-            </ul>
-          </>
-        )}
-      </section>
-
-      <section>
-        <p className="kicker">Look ahead</p>
-        <h2 style={{ fontFamily: "var(--font-serif)", fontWeight: 400, fontSize: 32, margin: "8px 0 16px" }}>
-          What this next click still reveals
-        </h2>
-
-        <div style={{ display: "flex", gap: 8, marginBottom: 24, flexWrap: "wrap" }}>
-          {(["shield", "transfer", "unshield", "balances"] as Tab[]).map((t) => (
-            <button key={t} className={`btn ${tab === t ? "btn-primary" : "btn-ghost"}`} onClick={() => setTab(t)}>
-              {t === "transfer" ? "send" : t}
-            </button>
-          ))}
-        </div>
-
-        <div className={`receipt ${gradeClass}`} style={{ marginBottom: 20 }}>
-          <div className="receipt-head">
-            {tab === "balances" ? "Balance read (wallet consent)" : score.grade.toUpperCase()}
-          </div>
-          {tab !== "balances" &&
-            score.findings.slice(0, 3).map((f) => (
-              <p key={f.id} style={{ color: "var(--text-2)", fontSize: 14, marginTop: 8, lineHeight: 1.5 }}>
-                {f.detail}
+        <section className="section">
+          <p className="kicker">Look back</p>
+          <h2 className="section-title">What this address already leaked</h2>
+          {loadingLook && <p className="muted">Reading Deposit / Withdrawal events…</p>}
+          {lookErr && <p className="warn">Live fetch failed. Showing the offline fixture. {lookErr}</p>}
+          {lookSource === "fixture" && !lookErr && <p className="warn">Offline fixture (demo pair).</p>}
+          {!address && <p className="muted">Connect Ready to scan your public edges.</p>}
+          {address && !loadingLook && (
+            <>
+              <p className="edge-count">
+                {edges.length} public edge{edges.length === 1 ? "" : "s"} · source {lookSource}
               </p>
-            ))}
-        </div>
-
-        {tab !== "balances" && <LeakSheet score={score} />}
-
-        <div className="form" style={{ marginTop: 24 }}>
-          {tab !== "balances" && (
-            <label>
-              <span>Amount (STRK)</span>
-              <input className="mono" value={amount} onChange={(e) => setAmount(e.target.value)} />
-              {tab === "shield" && publicBal != null && (
-                <button
-                  type="button"
-                  className="btn btn-ghost"
-                  onClick={() => {
-                    const reserve = fee && fee > 0n ? fee : 0n;
-                    const max = publicBal > reserve ? publicBal - reserve : 0n;
-                    setAmount(formatAmt(max));
-                  }}
-                >
-                  MAX (public balance minus pool fee)
-                </button>
-              )}
-            </label>
-          )}
-          {tab === "transfer" && (
-            <label>
-              <span>Recipient (defaults to self)</span>
-              <input value={recipient} onChange={(e) => setRecipient(e.target.value)} placeholder={address || "0x…"} />
-            </label>
-          )}
-          {fee != null && fee > 0n && tab !== "balances" && (
-            <p style={{ color: "var(--text-3)", fontSize: 13 }}>
-              Pool fee (live <code>get_fee_amount</code>): {formatAmt(fee)} STRK per private operation. Reserve it
-              when you pick MAX.
-            </p>
-          )}
-
-          {tab !== "balances" && (
-            <div>
-              <p className="kicker" style={{ marginBottom: 10 }}>
-                Quieter path
-              </p>
-              <div style={{ display: "grid", gap: 8 }}>
-                {paths.map((p) => (
-                  <button key={p.title} type="button" className="btn btn-ghost" onClick={() => applyRewrite(p)}>
-                    {p.title}
-                  </button>
+              <ul className="finding-list">
+                {historyFindings.slice(0, 6).map((f) => (
+                  <li key={f.id + f.title}>
+                    <strong>{f.title}.</strong> {f.detail}
+                  </li>
                 ))}
-              </div>
-              <p style={{ color: "var(--text-3)", fontSize: 13, marginTop: 8, lineHeight: 1.5 }}>
-                {paths[0]?.detail}
-              </p>
+              </ul>
+            </>
+          )}
+        </section>
+
+        <section className="section">
+          <p className="kicker">Look ahead</p>
+          <h2 className="section-title">What this next click still reveals</h2>
+
+          <div className="tabs" role="tablist" aria-label="Action">
+            {(["shield", "transfer", "unshield", "balances"] as Tab[]).map((t) => (
+              <button
+                key={t}
+                type="button"
+                role="tab"
+                aria-selected={tab === t}
+                className="btn btn-ghost"
+                onClick={() => setTab(t)}
+              >
+                {t === "transfer" ? "send" : t}
+              </button>
+            ))}
+          </div>
+
+          <div className={`receipt ${gradeClass}`}>
+            <div className="receipt-head">
+              {tab === "balances" ? "Balance read (wallet consent)" : score.grade.toUpperCase()}
             </div>
-          )}
+            {tab !== "balances" &&
+              score.findings.slice(0, 3).map((f) => (
+                <p key={f.id} className="muted">
+                  {f.detail}
+                </p>
+              ))}
+          </div>
 
-          {connected && !privacyCapable && (
-            <p className="warn">
-              This wallet does not advertise Wallet API 0.10. Install{" "}
-              <a href="https://www.ready.co/" target="_blank" rel="noreferrer">
-                Ready
-              </a>
-              .
-            </p>
-          )}
-          {tab === "shield" && privacyCapable && (
-            <p className="warn">
-              Shield is two wallet prompts: public approve, then deposit. A screening decline is the pool, not a
-              duplicate bug.
-            </p>
-          )}
-          {connected ? (
-            <button className="btn btn-primary" disabled={!network || !privacyCapable} onClick={go}>
-              {tab === "balances" ? "Read notes" : tab === "shield" ? "Approve, then shield" : tab === "transfer" ? "Send privately" : "Unshield"}
-            </button>
-          ) : (
-            <SelectWallet />
-          )}
-        </div>
-      </section>
+          {tab !== "balances" && <LeakSheet score={score} />}
 
-      {result ? <Receipt r={result} networkIndex={index} /> : null}
+          <div className="form mt-24">
+            {tab !== "balances" && (
+              <label>
+                <span>Amount (STRK)</span>
+                <input className="mono" value={amount} onChange={(e) => setAmount(e.target.value)} />
+                {tab === "shield" && publicBal != null && (
+                  <button
+                    type="button"
+                    className="btn btn-ghost"
+                    onClick={() => {
+                      const reserve = fee && fee > 0n ? fee : 0n;
+                      const max = publicBal > reserve ? publicBal - reserve : 0n;
+                      setAmount(formatAmt(max));
+                    }}
+                  >
+                    MAX (public balance minus pool fee)
+                  </button>
+                )}
+              </label>
+            )}
+            {tab === "transfer" && (
+              <label>
+                <span>Recipient (defaults to self)</span>
+                <input value={recipient} onChange={(e) => setRecipient(e.target.value)} placeholder={address || "0x…"} />
+              </label>
+            )}
+            {fee != null && fee > 0n && tab !== "balances" && (
+              <p className="quiet">
+                Pool fee (live <code>get_fee_amount</code>): {formatAmt(fee)} STRK per private operation. Reserve it
+                when you pick MAX.
+              </p>
+            )}
+
+            {tab !== "balances" && (
+              <div>
+                <p className="kicker mb-10">Quieter path</p>
+                <div className="stack">
+                  {paths.map((p) => (
+                    <button key={p.title} type="button" className="btn btn-ghost" onClick={() => applyRewrite(p)}>
+                      {p.title}
+                    </button>
+                  ))}
+                </div>
+                <p className="quiet mt-20">{paths[0]?.detail}</p>
+              </div>
+            )}
+
+            {connected && !privacyCapable && (
+              <p className="warn">
+                This wallet does not advertise Wallet API 0.10. Install{" "}
+                <a href="https://www.ready.co/" target="_blank" rel="noreferrer">
+                  Ready
+                </a>
+                .
+              </p>
+            )}
+            {tab === "shield" && privacyCapable && (
+              <p className="warn">
+                Shield is two wallet prompts: public approve, then deposit. A screening decline is the pool, not a
+                duplicate bug.
+              </p>
+            )}
+            {connected ? (
+              <button className="btn btn-primary" disabled={!network || !privacyCapable} onClick={go}>
+                {tab === "balances"
+                  ? "Read notes"
+                  : tab === "shield"
+                    ? "Approve, then shield"
+                    : tab === "transfer"
+                      ? "Send privately"
+                      : "Unshield"}
+              </button>
+            ) : (
+              <SelectWallet />
+            )}
+          </div>
+        </section>
+
+        {result ? <Receipt r={result} networkIndex={index} /> : null}
       </div>
     </div>
   );

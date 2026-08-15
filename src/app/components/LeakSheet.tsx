@@ -19,7 +19,7 @@ export default function LeakSheet({ score, kind }: { score?: Score; kind?: strin
     decide([], { kind: KIND[kind ?? "transfer"] ?? "transfer", token: "0x1", amount: 1n });
   return (
     <div className="leak">
-      <p className="eyebrow">What this action reveals</p>
+      <p className="kicker">What this action reveals</p>
       <div className="leak-cols">
         <div>
           <h4>Hidden</h4>

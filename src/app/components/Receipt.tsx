@@ -17,7 +17,7 @@ export default function Receipt({ r, networkIndex }: { r: ActionResult; networkI
           )}
         </div>
       ))}
-      {r.note ? <p style={{ marginTop: 10, color: "var(--text-3)", fontSize: 13 }}>{r.note}</p> : null}
+      {r.note ? <p className="quiet mt-20">{r.note}</p> : null}
     </div>
   );
 }
