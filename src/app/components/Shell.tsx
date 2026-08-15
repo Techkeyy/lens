@@ -5,8 +5,6 @@ import { usePathname } from "next/navigation";
 import SelectWallet from "./client/WalletHandle/SelectWallet";
 
 const LINKS = [
-  { href: "/lots", label: "Lots" },
-  { href: "/new", label: "List" },
   { href: "/vault", label: "Vault" },
   { href: "/protocol", label: "Protocol" },
 ];
@@ -45,7 +43,7 @@ export default function Shell({ children }: { children: React.ReactNode }) {
       <footer className="footer">
         <span>Lens · STRK20</span>
         <span>
-          <a href="https://github.com/Techkeyy/tender" target="_blank" rel="noreferrer">
+          <a href="https://github.com/Techkeyy/lens" target="_blank" rel="noreferrer">
             Source
           </a>
           {"  ·  "}

@@ -60,9 +60,9 @@ Status: done 2026-08-15
 7. Normalize addresses with `BigInt` before compare (`src/utils/constants.ts` token list).
 8. Verify against Ready + https://starknet-wallet-account.vercel.app/
 
-## 6. Phase 2 — Lens (look back / look ahead / quieter path)
+## 6. Phase 2 — Lens (look back / look ahead / quieter path) ✅ done 2026-08-15
 
-Status: not started
+Status: done 2026-08-15
 
 1. Replace auction pages (`lots`, `new`, landing) with Lens. Leave `cairo/` in the repo unused; do not generate new Cairo.
 2. **Look back** (`src/core/fetch.ts` + detect): query the pool's `Deposit` event filtered on **first indexed key = user address**. Never `transactions where sender == wallet`. Same for withdrawal events (recipient). Rules from official limits: same-amount rapid in-and-out, distinctive amounts, tight succession. Fixture path in `fixtures/` for offline demo.
