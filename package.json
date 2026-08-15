@@ -8,7 +8,8 @@
     "build": "next build --webpack",
     "start": "next start",
     "lint": "next lint",
-    "test": "vitest run"
+    "test": "vitest run",
+    "doctor": "npx tsx scripts/doctor.ts"
   },
   "dependencies": {
     "@starknet-io/get-starknet-discovery": "^6.0.3",
@@ -24,6 +25,7 @@
     "@starknet-io/types-js": "0.10.3",
     "@types/node": "24.10.2",
     "@types/react": "19.2.7",
+    "tsx": "^4.20.5",
     "typescript": "^5.9.3",
     "vitest": "^3.2.7"
   },

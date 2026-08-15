@@ -72,12 +72,15 @@ Status: done 2026-08-15
 6. Read pool fee via `get_fee_amount`; subtract from MAX. Do not hardcode 4 STRK in copy as a promise.
 7. Tests for detect/decide/rewrite (pure, no RPC).
 
-## 7. Phase 3 — tracked, not built now
+## 7. Phase 3 — close tracked items ✅ done 2026-08-16
 
-- **Anonymizer:** not required. If we ever score a private swap, use [AVNU private swaps](https://strk20-by-example.org/starknet-wallet-api/avnu-private-swaps) first (`@avnu/avnu-sdk` ≥ 4.2.0). No Cairo from this skill.
-- **Sub-accounts (Wallet API):** pending. Do not plan UX around them.
-- **Xverse dapp Wallet API:** in progress. Degrade until it ships.
-- **Privacy Bridge:** EVM funding reference only; not a Lens dependency.
+- **Anonymizer:** not built. First-party AVNU private swaps exist if we add a swap tab later. No Cairo.
+- **Sub-accounts (Wallet API):** still pending. No UX for them.
+- **Xverse dapp Wallet API:** still in progress. Non-Ready wallets stay blocked.
+- **Privacy Bridge:** not a dependency.
+- **Doctor:** `npm run doctor` checks the official pool class hash and fixture scoring.
+- **MAX:** shield MAX uses public STRK `balanceOf` minus live `get_fee_amount`.
+- **UI:** Veritable light system on landing, vault, and protocol.
 
 ## 8. Testing
 

@@ -67,7 +67,7 @@ export async function submitStrk20(opts: {
     const ceiling = String(error?.message ?? error).includes("WAIT_CEILING");
     onUpdate({
       status: ceiling ? "ok" : "error",
-      title: ceiling ? "Submitted — check the explorer if the receipt is slow" : "Could not confirm transaction",
+      title: ceiling ? "Submitted. Check the explorer if the receipt is slow" : "Could not confirm transaction",
       rows: [{ label: "Transaction", value: txH.slice(0, 10) + "…", hash: txH }],
       note: ceiling
         ? "Paymaster-relayed pool txs can take a while to show up on the RPC. The hash is live."

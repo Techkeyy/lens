@@ -37,7 +37,7 @@ export function tenderHelperForIndex(index: number): string {
   return "0x0";
 }
 
-/** Leftover starter-kit names — unused by Lens vault. */
+/** Leftover starter-kit names. Unused by Lens vault. */
 export const Strk20EchoHelperClassHash = "0x0";
 export function echoHelperForIndex(index: number): string {
   return tenderHelperForIndex(index);

@@ -1,5 +1,5 @@
 import { RpcProvider, hash, num } from "starknet";
-import { POOL_MAINNET, myFrontendProviders } from "@/utils/constants";
+import { POOL_MAINNET, addrSTRK, myFrontendProviders } from "@/utils/constants";
 import type { PublicEdge } from "./types";
 
 function pad(addr: string): string {
@@ -30,7 +30,7 @@ async function blockTime(provider: RpcProvider, block?: number): Promise<number>
 
 /**
  * Public edges only. Filter Deposit.user_addr and Withdrawal.to_addr.
- * Never filter on transaction sender — that is a relayer.
+ * Never filter on transaction sender. That is a relayer.
  */
 export async function fetchPublicEdges(address: string, networkIndex: number): Promise<PublicEdge[]> {
   const provider = myFrontendProviders[networkIndex] as RpcProvider;
@@ -87,6 +87,26 @@ export async function fetchPublicEdges(address: string, networkIndex: number): P
     });
   }
   return edges.sort((a, b) => a.timestamp - b.timestamp);
+}
+
+export async function fetchPublicStrkBalance(
+  address: string,
+  networkIndex: number
+): Promise<bigint | null> {
+  try {
+    const provider = myFrontendProviders[networkIndex];
+    const res: any = await provider.callContract({
+      contractAddress: addrSTRK,
+      entrypoint: "balanceOf",
+      calldata: [address],
+    });
+    const data = res?.result ?? res;
+    const low = num.toBigInt(data[0] ?? 0);
+    const high = data[1] ? num.toBigInt(data[1]) : 0n;
+    return low + (high << 128n);
+  } catch {
+    return null;
+  }
 }
 
 export async function fetchFeeAmount(networkIndex: number): Promise<bigint | null> {

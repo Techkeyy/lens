@@ -51,7 +51,7 @@ export function decide(
         id: "planned-rapid-inout-same-amount",
         severity: "loud",
         title: "This cash-out matches a recent deposit",
-        detail: `You are about to take out ${formatAmt(planned.amount)} — the same public amount that went in ${ago(twins[0].timestamp, at)} ago.`,
+        detail: `You are about to take out ${formatAmt(planned.amount)}, the same public amount that went in ${ago(twins[0].timestamp, at)} ago.`,
         source: SOURCES.distinctive,
       });
     } else if (

@@ -11,6 +11,7 @@ const LINKS = [
 
 export default function Shell({ children }: { children: React.ReactNode }) {
   const path = usePathname();
+  const home = path === "/";
   return (
     <div className="shell">
       <nav className="nav">
@@ -25,30 +26,21 @@ export default function Shell({ children }: { children: React.ReactNode }) {
           ))}
         </div>
         <div className="nav-right">
-          <a
-            className="live"
-            href="https://strk20.starknet.io/hackathon"
-            target="_blank"
-            rel="noreferrer"
-          >
-            <span className="live-dot" />
-            <span className="num" style={{ fontSize: 10, letterSpacing: "0.16em", textTransform: "uppercase", color: "var(--accent)" }}>
-              STRK20 sprint
-            </span>
-          </a>
-          <SelectWallet variant="nav" />
+          {home ? (
+            <Link href="/vault" className="btn btn-primary">
+              Open vault
+            </Link>
+          ) : (
+            <SelectWallet variant="nav" />
+          )}
         </div>
       </nav>
       {children}
       <footer className="footer">
-        <span>Lens · STRK20</span>
+        <span>Lens. Privacy briefing for STRK20.</span>
         <span>
           <a href="https://github.com/Techkeyy/lens" target="_blank" rel="noreferrer">
             Source
-          </a>
-          {"  ·  "}
-          <a href="https://strk20-by-example.org/" target="_blank" rel="noreferrer">
-            STRK20 docs
           </a>
         </span>
       </footer>

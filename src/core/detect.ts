@@ -62,7 +62,7 @@ export function detectHistory(edges: PublicEdge[], windowSeconds = TIGHT_WINDOW_
       severity: "info",
       title: "No public pool edges on this address",
       detail:
-        "We only read Deposit and Withdrawal events. Private transfers do not appear. Empty is not private forever — the next shield or unshield will be public.",
+        "We only read Deposit and Withdrawal events. Private transfers do not appear. Empty is not private forever. The next shield or unshield will be public.",
       source: SOURCES.edges,
     });
   }

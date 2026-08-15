@@ -10,7 +10,7 @@ import { useFrontendProvider } from "../components/client/provider/providerConte
 import { useStoreWallet } from "../components/Wallet/walletContext";
 import { decide } from "@/core/decide";
 import { detectHistory, formatAmt } from "@/core/detect";
-import { fetchFeeAmount, fetchPublicEdges } from "@/core/fetch";
+import { fetchFeeAmount, fetchPublicEdges, fetchPublicStrkBalance } from "@/core/fetch";
 import { loadFixture } from "@/core/fixture";
 import { rewrite } from "@/core/rewrite";
 import type { PlannedKind, PublicEdge, Rewrite, Score } from "@/core/types";
@@ -38,16 +38,24 @@ export default function VaultPage() {
   const [lookErr, setLookErr] = useState("");
   const [fee, setFee] = useState<bigint | null>(null);
   const [loadingLook, setLoadingLook] = useState(false);
+  const [publicBal, setPublicBal] = useState<bigint | null>(null);
 
   useEffect(() => {
     let dead = false;
     fetchFeeAmount(index).then((f) => {
       if (!dead) setFee(f);
     });
+    if (address) {
+      fetchPublicStrkBalance(address, index).then((b) => {
+        if (!dead) setPublicBal(b);
+      });
+    } else {
+      setPublicBal(null);
+    }
     return () => {
       dead = true;
     };
-  }, [index]);
+  }, [index, address]);
 
   useEffect(() => {
     if (!address) {
@@ -168,18 +176,19 @@ export default function VaultPage() {
     <div className="page">
       <div className="page-head">
         <div>
-          <p className="eyebrow">{network ?? "Switch to Mainnet"} · STRK20 pool</p>
+          <p className="kicker">{network ?? "Switch to Mainnet"} · STRK20 pool</p>
           <h1>Vault</h1>
         </div>
       </div>
+      <div className="console">
 
       <section style={{ marginBottom: 40 }}>
-        <p className="eyebrow">Look back</p>
+        <p className="kicker">Look back</p>
         <h2 style={{ fontFamily: "var(--font-serif)", fontWeight: 400, fontSize: 32, margin: "8px 0 12px" }}>
           What this address already leaked
         </h2>
         {loadingLook && <p style={{ color: "var(--text-3)" }}>Reading Deposit / Withdrawal events…</p>}
-        {lookErr && <p className="warn">Live fetch failed — showing the offline fixture. {lookErr}</p>}
+        {lookErr && <p className="warn">Live fetch failed. Showing the offline fixture. {lookErr}</p>}
         {lookSource === "fixture" && !lookErr && <p className="warn">Offline fixture (demo pair).</p>}
         {!address && <p style={{ color: "var(--text-3)" }}>Connect Ready to scan your public edges.</p>}
         {address && !loadingLook && (
@@ -199,7 +208,7 @@ export default function VaultPage() {
       </section>
 
       <section>
-        <p className="eyebrow">Look ahead</p>
+        <p className="kicker">Look ahead</p>
         <h2 style={{ fontFamily: "var(--font-serif)", fontWeight: 400, fontSize: 32, margin: "8px 0 16px" }}>
           What this next click still reveals
         </h2>
@@ -230,7 +239,20 @@ export default function VaultPage() {
           {tab !== "balances" && (
             <label>
               <span>Amount (STRK)</span>
-              <input className="num" value={amount} onChange={(e) => setAmount(e.target.value)} />
+              <input className="mono" value={amount} onChange={(e) => setAmount(e.target.value)} />
+              {tab === "shield" && publicBal != null && (
+                <button
+                  type="button"
+                  className="btn btn-ghost"
+                  onClick={() => {
+                    const reserve = fee && fee > 0n ? fee : 0n;
+                    const max = publicBal > reserve ? publicBal - reserve : 0n;
+                    setAmount(formatAmt(max));
+                  }}
+                >
+                  MAX (public balance minus pool fee)
+                </button>
+              )}
             </label>
           )}
           {tab === "transfer" && (
@@ -248,7 +270,7 @@ export default function VaultPage() {
 
           {tab !== "balances" && (
             <div>
-              <p className="eyebrow" style={{ marginBottom: 10 }}>
+              <p className="kicker" style={{ marginBottom: 10 }}>
                 Quieter path
               </p>
               <div style={{ display: "grid", gap: 8 }}>
@@ -290,6 +312,7 @@ export default function VaultPage() {
       </section>
 
       {result ? <Receipt r={result} networkIndex={index} /> : null}
+      </div>
     </div>
   );
 }

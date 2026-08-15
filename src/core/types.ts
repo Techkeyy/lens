@@ -50,11 +50,11 @@ export const TIGHT_WINDOW_SECONDS = 30 * 60;
 
 export const SOURCES = {
   edges:
-    "https://strk20-by-example.org/compliance — Edges are public by design: deposits and withdrawals expose addresses and amounts.",
+    "https://strk20-by-example.org/compliance. Edges are public by design: deposits and withdrawals expose addresses and amounts.",
   distinctive:
-    "https://strk20-by-example.org/compliance — Distinctive patterns: recognizable amounts, or rapid in-and-out sequences, weaken the anonymity set.",
+    "https://strk20-by-example.org/compliance. Distinctive patterns: recognizable amounts, or rapid in-and-out sequences, weaken the anonymity set.",
   succession:
-    "https://strk20-by-example.org/compliance — Channel-open linkability: depositing or withdrawing in tight succession can link activity.",
+    "https://strk20-by-example.org/compliance. Channel-open linkability: depositing or withdrawing in tight succession can link activity.",
   inside:
-    "https://strk20-by-example.org/what-is-strk20 — Inside the pool, sender, receiver, amounts, and notes are private.",
+    "https://strk20-by-example.org/what-is-strk20. Inside the pool, sender, receiver, amounts, and notes are private.",
 } as const;
