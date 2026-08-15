@@ -49,7 +49,10 @@ export function rewrite(
       detail: "An in-pool transfer does not publish amount or counterparties. Unshielding immediately after still has a timing cost.",
       action: { kind: "transfer", token: planned.token, amount: planned.amount },
     });
-  } else if (planned.kind === "unshield" && score.grade !== "quiet") {
+  } else if (
+    planned.kind === "unshield" &&
+    score.findings.some((f) => f.id === "planned-tight-succession")
+  ) {
     out.push({
       kind: "wait",
       title: "Wait out the tight window",

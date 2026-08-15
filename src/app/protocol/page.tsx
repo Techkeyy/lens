@@ -32,7 +32,8 @@ export default function ProtocolPage() {
         does not use sub-accounts (Wallet API still pending), and does not run a
         custom prover. Deposit screening still applies to every shield. Amounts
         on deposit, withdrawal, and helper legs stay visible; movement inside
-        the pool does not.
+        the pool does not. Look-back scans the last 80,000 blocks. We do not
+        invent an anonymity-set size.
       </p>
 
       <div className="spec">

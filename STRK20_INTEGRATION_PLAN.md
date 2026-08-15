@@ -6,7 +6,7 @@ Product: **look back** (what this address already leaked), **look ahead** (what 
 
 ## 1. Project snapshot
 
-- Stack: Next.js 16, React 19, `starknet@10.4.0`, `@starknet-io/get-starknet-discovery@6.0.2`, `@starknet-io/get-starknet-wallet-standard@6.0.2`, `@starknet-io/types-js@0.10.3`, zustand. Cairo auction helper exists under `cairo/` — **not used for Lens**; this skill never edits Cairo.
+- Stack: Next.js 16, React 19, `starknet@10.4.0`, `@starknet-io/get-starknet-discovery@6.0.3`, `@starknet-io/get-starknet-wallet-standard@6.0.3`, `@starknet-io/types-js@0.10.3`, zustand. Cairo auction helper exists under `cairo/` — **not used for Lens**; this skill never edits Cairo.
 - Relevant code:
   - Connect: `src/app/components/client/WalletHandle/SelectWallet.tsx` (`WalletAccountV6.connect`, `walletV6.requestAccounts`)
   - Account store: `src/app/components/Wallet/walletContext.ts`

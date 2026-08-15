@@ -38,6 +38,13 @@ export function decide(
   const vis = visibilityFor(planned.kind);
 
   if (planned.kind === "unshield") {
+    findings.unshift({
+      id: "planned-public-withdrawal",
+      severity: "info",
+      title: "This unshield is a public edge",
+      detail: `Withdrawing ${formatAmt(planned.amount)} publishes the recipient, token, and amount. Which notes funded it stays hidden.`,
+      source: SOURCES.edges,
+    });
     const twins = history.filter(
       (e) =>
         e.kind === "shield" &&
@@ -106,12 +113,14 @@ export function decide(
     }
   }
 
-  return { grade: gradeOf(findings), findings, hidden: vis.hidden, visible: vis.visible };
+  return { grade: gradeOf(findings, planned.kind), findings, hidden: vis.hidden, visible: vis.visible };
 }
 
-function gradeOf(findings: Finding[]): Grade {
+function gradeOf(findings: Finding[], kind: PlannedAction["kind"]): Grade {
   if (findings.some((f) => f.severity === "loud")) return "loud";
   if (findings.some((f) => f.severity === "noisy")) return "noisy";
+  // Public doors are never quiet, even with no extra leak pattern.
+  if (kind === "shield" || kind === "unshield") return "noisy";
   return "quiet";
 }
 
