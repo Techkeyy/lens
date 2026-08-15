@@ -72,7 +72,7 @@ This is not [RFP-08](https://github.com/starkience/strk20-hackathon/blob/main/ID
 
 ## How I tried to break it
 
-`npm test` is **14** vitest cases in `src/core/detect.test.ts`.
+`npm test` is **16** vitest cases in `src/core/detect.test.ts`.
 
 | Input | Result |
 | --- | --- |

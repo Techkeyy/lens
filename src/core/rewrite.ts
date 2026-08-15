@@ -51,6 +51,19 @@ export function rewrite(
     });
   } else if (
     planned.kind === "unshield" &&
+    score.findings.some((f) => f.id === "planned-echo-old-amount")
+  ) {
+    const changed = (planned.amount * 7n) / 10n;
+    if (changed > 0n && changed !== planned.amount) {
+      out.push({
+        kind: "change-amount",
+        title: `Take out a different amount (${formatAmt(changed)})`,
+        detail: "Stop echoing the old public deposit figure. The withdrawal stays public.",
+        action: { ...planned, amount: changed },
+      });
+    }
+  } else if (
+    planned.kind === "unshield" &&
     score.findings.some((f) => f.id === "planned-tight-succession")
   ) {
     out.push({
@@ -67,6 +80,17 @@ export function rewrite(
       title: "Shield is always a public door",
       detail: "There is no quiet shield. After this, stay inside the pool if you can.",
     });
+    if (score.findings.some((f) => f.id === "planned-distinctive-deposit")) {
+      const changed = (planned.amount * 7n) / 10n;
+      if (changed > 0n && changed !== planned.amount) {
+        out.push({
+          kind: "change-amount",
+          title: `Use a less unique amount (${formatAmt(changed)})`,
+          detail: "A round or already-used figure is a weaker fingerprint than a one-off.",
+          action: { ...planned, amount: changed },
+        });
+      }
+    }
   }
 
   if (planned.kind === "transfer" && score.findings.some((f) => f.id === "planned-transfer-near-edge")) {

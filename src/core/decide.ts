@@ -1,4 +1,4 @@
-import { detectHistory, formatAmt } from "./detect";
+import { formatAmt } from "./detect";
 import {
   SOURCES,
   TIGHT_WINDOW_SECONDS,
@@ -34,24 +34,23 @@ export function decide(
   windowSeconds = TIGHT_WINDOW_SECONDS
 ): Score {
   const at = planned.at ?? Math.floor(Date.now() / 1000);
-  const findings: Finding[] = [...detectHistory(history, windowSeconds)];
+  // Look-back stays in detectHistory. Look-ahead only grades this click.
+  const findings: Finding[] = [];
   const vis = visibilityFor(planned.kind);
+  const token = planned.token.toLowerCase();
+  const shields = history.filter((e) => e.kind === "shield" && e.token.toLowerCase() === token);
+  const sameAmountShields = shields.filter((e) => e.amount === planned.amount && planned.amount !== 0n);
 
   if (planned.kind === "unshield") {
-    findings.unshift({
+    findings.push({
       id: "planned-public-withdrawal",
       severity: "info",
       title: "This unshield is a public edge",
       detail: `Withdrawing ${formatAmt(planned.amount)} publishes the recipient, token, and amount. Which notes funded it stays hidden.`,
       source: SOURCES.edges,
     });
-    const twins = history.filter(
-      (e) =>
-        e.kind === "shield" &&
-        e.token.toLowerCase() === planned.token.toLowerCase() &&
-        e.amount === planned.amount &&
-        at - e.timestamp >= 0 &&
-        at - e.timestamp <= windowSeconds
+    const twins = sameAmountShields.filter(
+      (e) => at - e.timestamp >= 0 && at - e.timestamp <= windowSeconds
     );
     if (twins.length) {
       findings.unshift({
@@ -62,13 +61,7 @@ export function decide(
         source: SOURCES.distinctive,
       });
     } else if (
-      history.some(
-        (e) =>
-          e.kind === "shield" &&
-          e.token.toLowerCase() === planned.token.toLowerCase() &&
-          at - e.timestamp >= 0 &&
-          at - e.timestamp <= windowSeconds
-      )
+      shields.some((e) => at - e.timestamp >= 0 && at - e.timestamp <= windowSeconds)
     ) {
       findings.unshift({
         id: "planned-tight-succession",
@@ -77,17 +70,34 @@ export function decide(
         detail: `A deposit on this token is still inside the ${Math.round(windowSeconds / 60)}-minute window.`,
         source: SOURCES.succession,
       });
+    } else if (sameAmountShields.length === 1) {
+      findings.unshift({
+        id: "planned-echo-old-amount",
+        severity: "noisy",
+        title: "This cash-out echoes an older deposit amount",
+        detail: `${formatAmt(planned.amount)} already appeared once as a public shield. Matching it later is still the distinctive-amount leak, even after the 30-minute clock.`,
+        source: SOURCES.distinctive,
+      });
     }
   }
 
   if (planned.kind === "shield") {
-    findings.unshift({
+    findings.push({
       id: "planned-public-deposit",
       severity: "info",
       title: "This shield is a public edge",
       detail: `Depositing ${formatAmt(planned.amount)} publishes your address, token, and amount. The note inside is encrypted; this door is not.`,
       source: SOURCES.edges,
     });
+    if (planned.amount !== 0n && sameAmountShields.length === 0) {
+      findings.unshift({
+        id: "planned-distinctive-deposit",
+        severity: "noisy",
+        title: "This deposit amount is not in your public history yet",
+        detail: `${formatAmt(planned.amount)} will be a recognizable door. Unshielding the same figure later is the pattern the docs warn about.`,
+        source: SOURCES.distinctive,
+      });
+    }
   }
 
   if (planned.kind === "transfer") {

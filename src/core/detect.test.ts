@@ -124,4 +124,24 @@ describe("decide + rewrite", () => {
     expect(score.grade).toBe("noisy");
     expect(score.findings.some((f) => f.id === "planned-transfer-near-edge")).toBe(true);
   });
+
+  it("does not let an old loud pair make a later private send loud", () => {
+    const score = decide(loadFixture(), {
+      kind: "transfer",
+      token: STRK,
+      amount: TEN,
+      at: 2_000_000_000,
+    });
+    expect(score.grade).toBe("quiet");
+  });
+
+  it("changes unshield advice when the amount stops matching the deposit", () => {
+    const hist = [edge({ kind: "shield", timestamp: 1000 })];
+    const match = decide(hist, { kind: "unshield", token: STRK, amount: TEN, at: 1060 });
+    const other = decide(hist, { kind: "unshield", token: STRK, amount: TEN / 2n, at: 1060 });
+    expect(match.grade).toBe("loud");
+    expect(other.grade).toBe("noisy");
+    expect(other.findings.some((f) => f.id === "planned-rapid-inout-same-amount")).toBe(false);
+    expect(other.findings.some((f) => f.id === "planned-tight-succession")).toBe(true);
+  });
 });
