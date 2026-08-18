@@ -8,6 +8,7 @@ import LeakSheet from "../components/LeakSheet";
 import Receipt from "../components/Receipt";
 import { useFrontendProvider } from "../components/client/provider/providerContext";
 import { useStoreWallet } from "../components/Wallet/walletContext";
+import { formatUtc } from "@/core/clock";
 import { decide } from "@/core/decide";
 import { detectHistory, formatAmt } from "@/core/detect";
 import { fetchFeeAmount, fetchPublicEdges, fetchPublicStrkBalance } from "@/core/fetch";
@@ -225,6 +226,11 @@ export default function VaultPage() {
             <div className="receipt-head">
               {tab === "balances" ? "Balance read (wallet consent)" : score.grade.toUpperCase()}
             </div>
+            {tab !== "balances" &&
+              score.quietAfter &&
+              score.quietAfter > Math.floor(Date.now() / 1000) && (
+                <p className="edge-count">Quiet after {formatUtc(score.quietAfter)}</p>
+              )}
             {tab !== "balances" &&
               score.findings.slice(0, 3).map((f) => (
                 <p key={f.id} className="muted">

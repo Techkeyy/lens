@@ -81,44 +81,7 @@ export function hexAmt(n: bigint): string {
   return num.toHex(n);
 }
 
-/** Build privacy_invoke calldata matching cairo/src/lib.cairo. */
-export function tenderCalldata(p: {
-  operation: number;
-  auctionId?: number;
-  lotToken?: string;
-  lotAmount?: bigint;
-  bidToken?: string;
-  maxBid?: bigint;
-  minBid?: bigint;
-  bidEnd?: number;
-  revealEnd?: number;
-  kind?: number;
-  commitment?: string;
-  bidId?: number;
-  revealAmount?: bigint;
-  revealSalt?: string;
-}): string[] {
-  const z = "0x0";
-  return [
-    num.toHex(p.operation),
-    num.toHex(p.auctionId ?? 0),
-    p.lotToken ?? z,
-    num.toHex(p.lotAmount ?? 0n),
-    p.bidToken ?? z,
-    num.toHex(p.maxBid ?? 0n),
-    num.toHex(p.minBid ?? 0n),
-    num.toHex(p.bidEnd ?? 0),
-    num.toHex(p.revealEnd ?? 0),
-    num.toHex(p.kind ?? 0),
-    p.commitment ?? z,
-    num.toHex(p.bidId ?? 0),
-    num.toHex(p.revealAmount ?? 0n),
-    p.revealSalt ?? z,
-    "${openNoteIds[0]}",
-    "${poolAddress}",
-  ];
-}
-
+/** Generic anonymizer call: withdraw to a helper, then privacy_invoke it. */
 export function invokeActions(opts: {
   helper: string;
   token: string;

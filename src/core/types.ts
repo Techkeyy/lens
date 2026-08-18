@@ -34,6 +34,8 @@ export type Score = {
   findings: Finding[];
   hidden: string[];
   visible: string[];
+  /** Unix seconds. This click stays inside the tight window until then. */
+  quietAfter?: number;
 };
 
 export type RewriteKind = "wait" | "split" | "change-amount" | "transfer-first";

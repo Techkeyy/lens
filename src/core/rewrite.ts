@@ -1,5 +1,19 @@
+import { waitLabel } from "./clock";
 import { formatAmt } from "./detect";
 import { TIGHT_WINDOW_SECONDS, type PlannedAction, type Rewrite, type Score } from "./types";
+
+function waitRewrite(planned: PlannedAction, score: Score, fallbackTitle: string, detail: string): Rewrite {
+  const now = planned.at ?? Math.floor(Date.now() / 1000);
+  if (score.quietAfter && score.quietAfter > now) {
+    return {
+      kind: "wait",
+      title: waitLabel(score.quietAfter, now),
+      detail,
+      waitSeconds: score.quietAfter - now,
+    };
+  }
+  return { kind: "wait", title: fallbackTitle, detail, waitSeconds: TIGHT_WINDOW_SECONDS };
+}
 
 export function rewrite(
   planned: PlannedAction,
@@ -19,12 +33,14 @@ export function rewrite(
   }
 
   if (planned.kind === "unshield" && score.findings.some((f) => f.id === "planned-rapid-inout-same-amount")) {
-    out.push({
-      kind: "wait",
-      title: `Wait at least ${Math.round(windowSeconds / 60)} minutes`,
-      detail: "Spread deposit and withdrawal over time. Same amount later is still a pattern; the tight clock is the loud part.",
-      waitSeconds: windowSeconds,
-    });
+    out.push(
+      waitRewrite(
+        planned,
+        score,
+        `Wait at least ${Math.round(windowSeconds / 60)} minutes`,
+        "Spread deposit and withdrawal over time. Same amount later is still a pattern; the tight clock is the loud part."
+      )
+    );
     const changed = (planned.amount * 7n) / 10n;
     if (changed > 0n && changed !== planned.amount) {
       out.push({
@@ -66,12 +82,9 @@ export function rewrite(
     planned.kind === "unshield" &&
     score.findings.some((f) => f.id === "planned-tight-succession")
   ) {
-    out.push({
-      kind: "wait",
-      title: "Wait out the tight window",
-      detail: "You have a recent public shield on this token.",
-      waitSeconds: windowSeconds,
-    });
+    out.push(
+      waitRewrite(planned, score, "Wait out the tight window", "You have a recent public shield on this token.")
+    );
   }
 
   if (planned.kind === "shield") {
@@ -94,12 +107,14 @@ export function rewrite(
   }
 
   if (planned.kind === "transfer" && score.findings.some((f) => f.id === "planned-transfer-near-edge")) {
-    out.push({
-      kind: "wait",
-      title: "Wait before the private send",
-      detail: "Do not sit a private transfer on top of a public shield or unshield.",
-      waitSeconds: windowSeconds,
-    });
+    out.push(
+      waitRewrite(
+        planned,
+        score,
+        "Wait before the private send",
+        "Do not sit a private transfer on top of a public shield or unshield."
+      )
+    );
   }
 
   if (!out.length) {

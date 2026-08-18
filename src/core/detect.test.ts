@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { addrSTRK as STRK } from "@/utils/constants";
+import { quietAfter, waitLabel } from "./clock";
 import { decide } from "./decide";
 import { detectHistory } from "./detect";
 import { rewrite } from "./rewrite";
@@ -88,6 +89,8 @@ describe("decide + rewrite", () => {
     expect(paths.map((p) => p.kind)).toEqual(
       expect.arrayContaining(["wait", "split", "change-amount", "transfer-first"])
     );
+    expect(score.quietAfter).toBe(1000 + TIGHT_WINDOW_SECONDS);
+    expect(paths[0].title).toMatch(/quiet after/i);
   });
 
   it("keeps a lone private transfer quiet", () => {
@@ -143,5 +146,22 @@ describe("decide + rewrite", () => {
     expect(other.grade).toBe("noisy");
     expect(other.findings.some((f) => f.id === "planned-rapid-inout-same-amount")).toBe(false);
     expect(other.findings.some((f) => f.id === "planned-tight-succession")).toBe(true);
+  });
+
+  it("clocks quiet-after from the latest matching deposit, not a flat 30 minutes", () => {
+    const until = quietAfter([edge({ kind: "shield", timestamp: 1000 })], {
+      kind: "unshield",
+      token: STRK,
+      amount: TEN,
+      at: 1600,
+    });
+    expect(until).toBe(1000 + TIGHT_WINDOW_SECONDS);
+    expect(waitLabel(until!, 1600)).toMatch(/quiet after/i);
+  });
+
+  it("has no quiet-after clock on a lone shield", () => {
+    expect(
+      quietAfter([], { kind: "shield", token: STRK, amount: TEN, at: 1 })
+    ).toBeUndefined();
   });
 });

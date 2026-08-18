@@ -1,3 +1,4 @@
+import { quietAfter } from "./clock";
 import { formatAmt } from "./detect";
 import {
   SOURCES,
@@ -123,7 +124,13 @@ export function decide(
     }
   }
 
-  return { grade: gradeOf(findings, planned.kind), findings, hidden: vis.hidden, visible: vis.visible };
+  return {
+    grade: gradeOf(findings, planned.kind),
+    findings,
+    hidden: vis.hidden,
+    visible: vis.visible,
+    quietAfter: quietAfter(history, planned, windowSeconds),
+  };
 }
 
 function gradeOf(findings: Finding[], kind: PlannedAction["kind"]): Grade {
