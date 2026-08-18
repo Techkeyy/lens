@@ -35,6 +35,8 @@ export type NoteReader = {
   getNote(noteId: Felt): Promise<StoredNote | undefined>;
   nullifierExists(nullifier: Felt): Promise<boolean>;
   getPublicKey(userAddr: Felt): Promise<bigint>;
+  channelExists(channelMarker: Felt): Promise<boolean>;
+  subchannelExists(subchannelMarker: Felt): Promise<boolean>;
 };
 
 /** Reads against a live pool. `pool` is the STRK20 privacy pool address. */
@@ -72,6 +74,24 @@ export function poolReader(provider: RpcProvider, pool: string): NoteReader {
         calldata: [toFelt(userAddr).toString()],
       });
       return BigInt(res[0]);
+    },
+
+    async channelExists(channelMarker: Felt) {
+      const res = await provider.callContract({
+        contractAddress: pool,
+        entrypoint: "channel_exists",
+        calldata: [toFelt(channelMarker).toString()],
+      });
+      return BigInt(res[0]) !== 0n;
+    },
+
+    async subchannelExists(subchannelMarker: Felt) {
+      const res = await provider.callContract({
+        contractAddress: pool,
+        entrypoint: "subchannel_exists",
+        calldata: [toFelt(subchannelMarker).toString()],
+      });
+      return BigInt(res[0]) !== 0n;
     },
   };
 }

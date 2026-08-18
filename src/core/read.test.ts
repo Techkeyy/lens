@@ -37,6 +37,12 @@ function fakePool(
     async getPublicKey() {
       return 0n;
     },
+    async channelExists() {
+      return true;
+    },
+    async subchannelExists() {
+      return true;
+    },
   };
 }
 

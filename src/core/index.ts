@@ -1,6 +1,7 @@
 export * from "./types";
 export * from "./derive";
 export * from "./read";
+export * from "./claim";
 export * from "./detect";
 export * from "./decide";
 export * from "./rewrite";
