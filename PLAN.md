@@ -97,9 +97,27 @@ builders integrate, not another standalone app.
 
 | Claim | Question it answers | Soundness |
 | --- | --- | --- |
-| Relationship | "Did `0xABC` pay me, and how much" | Exact, channel scoped |
-| Balance floor | "Do I hold at least N" | Lower bound, reveals the note set used |
-| Income over a period | "What came in during this window" | Sum of relationship claims |
+| Relationship | "Did `0xABC` pay me, and how much" | Sound. Identity bound by `channel_exists` |
+| Income over a period | "What came in during this window" | Sound. Sum of relationship claims |
+| ~~Balance floor~~ | ~~"Do I hold at least N"~~ | **Cut. Not soundly verifiable, see below** |
+
+**Balance floor is cut from v1.** A note's nullifier binds to the owner's
+private viewing key, so a verifier cannot recompute one. A supplied nullifier
+is therefore an unverifiable assertion: a discloser could hand over any felt
+that happens to be absent from the pool and call the note unspent. Proving
+"I still hold this" needs a circuit, or the master key we exist to avoid
+handing over. `spentStatus` stays in the code as the owner's own view and is
+documented as not being evidence. Found on Day 1 while writing `read.ts`,
+before anything was built on top of it.
+
+**Identity binding, the piece that makes the rest sound.** A channel key alone
+proves only that notes exist at some locations. The pool's public
+`channel_exists(channel_marker)` closes it: the marker is computed from the
+channel key plus both addresses and the recipient's registered public key, so
+if the pool says it exists, the pool is attesting that this key belongs to
+that pair in that direction. `subchannel_exists` does the same for the token.
+Without this step anyone could fund their own lane and present it as a payment
+from someone else, which is covered by a test.
 
 Stretch, only if days remain: **source of funds**, linking a public `Deposit` to
 the notes it created. Deferred because it needs the deposit-to-note link, the one
