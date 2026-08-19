@@ -115,7 +115,7 @@ async function main() {
 
   if (!deployed && balance === 0n) {
     console.log(`\nFund this address with Sepolia STRK, then run --deploy:`);
-    console.log(`  https://starknet-faucet.vercel.app/`);
+    console.log(`  https://faucet.starknet.io/   (official, Starknet Foundation)`);
     console.log(`  address: ${address}`);
     return;
   }
