@@ -1,42 +1,50 @@
 /**
- * Sepolia test account for the disclosure round trip.
+ * Deployer accounts for Lens.
  *
- * We need a real shielded payment on a real network to prove that a channel
- * key we derived ourselves locates and decrypts a note the pool actually
- * wrote. That needs a funded account, which is what this script sets up.
+ *   npx tsx scripts/account.ts              show address, balance, deploy state
+ *   npx tsx scripts/account.ts --new        generate a key into .env.local
+ *   npx tsx scripts/account.ts --deploy     deploy once the address is funded
+ *   ... --mainnet                           operate on mainnet instead
  *
- *   npx tsx scripts/account.ts            show address, balance, deploy state
- *   npx tsx scripts/account.ts --new      generate a key into .env.local
- *   npx tsx scripts/account.ts --deploy   deploy once the address is funded
+ * Sepolia exists to rehearse the pool round trip before spending real funds.
+ * Mainnet is the deliverable: the sprint scores a working mainnet product and
+ * wants real transaction hashes.
  *
- * The key lives in .env.local, which is gitignored. Sepolia only. Never point
- * this at mainnet and never commit the key.
+ * Keys live in .env.local, which is gitignored. The mainnet key is a dedicated
+ * deployer, funded with only what the deployment needs. Never put a personal
+ * wallet key here, and never commit this file.
  */
 import { existsSync, readFileSync, appendFileSync, writeFileSync } from "node:fs";
 import { Account, CallData, RpcProvider, ec, hash, num, stark } from "starknet";
 
 const ENV_FILE = ".env.local";
-const KEY_NAME = "SEPOLIA_PRIVATE_KEY";
-const RPC = process.env.STARKNET_RPC_SEPOLIA ?? "https://api.cartridge.gg/x/starknet/sepolia";
+const MAINNET = process.argv.includes("--mainnet");
+const NETWORK = MAINNET ? "mainnet" : "sepolia";
+const KEY_NAME = MAINNET ? "MAINNET_PRIVATE_KEY" : "SEPOLIA_PRIVATE_KEY";
+const ADDR_NAME = MAINNET ? "MAINNET_ADDRESS" : "SEPOLIA_ADDRESS";
+const RPC =
+  process.env[`STARKNET_RPC_${NETWORK.toUpperCase()}`] ??
+  `https://api.cartridge.gg/x/starknet/${NETWORK}`;
 
-/** OpenZeppelin account, declared on Sepolia. Constructor takes public_key. */
+/** OpenZeppelin account. Constructor takes public_key. Declared on both nets. */
 const ACCOUNT_CLASS_HASH =
   "0x061dac032f228abef9c6626f995015233097ae253a7f72d68552db02f2971b8f";
 
-/** Fee token on Sepolia. Same address on every Starknet network. */
+/** Fee token. Same address on every Starknet network. */
 const STRK = "0x04718f5a0fc34cc1af16a1cdee98ffb20c31f5cd61d6ab07201858f4287c938d";
 
-function readEnvKey(): string | undefined {
-  if (process.env[KEY_NAME]) return process.env[KEY_NAME];
+function readEnv(name: string): string | undefined {
+  if (process.env[name]) return process.env[name];
   if (!existsSync(ENV_FILE)) return undefined;
   const line = readFileSync(ENV_FILE, "utf8")
     .split(/\r?\n/)
-    .find((l) => l.startsWith(`${KEY_NAME}=`));
-  return line?.slice(KEY_NAME.length + 1).trim() || undefined;
+    .find((l) => l.startsWith(`${name}=`));
+  return line?.slice(name.length + 1).trim() || undefined;
 }
 
-function writeEnvKey(privateKey: string) {
-  const entry = `${KEY_NAME}=${privateKey}\n`;
+function writeEnv(name: string, value: string) {
+  if (readEnv(name) === value) return;
+  const entry = `${name}=${value}\n`;
   if (!existsSync(ENV_FILE)) writeFileSync(ENV_FILE, entry);
   else appendFileSync(ENV_FILE, (readFileSync(ENV_FILE, "utf8").endsWith("\n") ? "" : "\n") + entry);
 }
@@ -85,7 +93,7 @@ async function main() {
   const args = process.argv.slice(2);
   const provider = new RpcProvider({ nodeUrl: RPC });
 
-  let privateKey = readEnvKey();
+  let privateKey = readEnv(KEY_NAME);
 
   if (args.includes("--new")) {
     if (privateKey) {
@@ -93,7 +101,7 @@ async function main() {
       process.exit(1);
     }
     privateKey = num.toHex(stark.randomAddress());
-    writeEnvKey(privateKey);
+    writeEnv(KEY_NAME, privateKey);
     console.log(`wrote a new ${KEY_NAME} to ${ENV_FILE} (gitignored)`);
   }
 
@@ -103,10 +111,12 @@ async function main() {
   }
 
   const { publicKey, address } = addressFor(privateKey);
+  // deploy-registry.ts reads this, so record it as soon as it is known.
+  writeEnv(ADDR_NAME, address);
   const deployed = await isDeployed(provider, address);
   const balance = await strkBalance(provider, address);
 
-  console.log(`network    sepolia`);
+  console.log(`network    ${NETWORK}`);
   console.log(`rpc        ${RPC}`);
   console.log(`public key ${publicKey}`);
   console.log(`address    ${address}`);
@@ -114,9 +124,16 @@ async function main() {
   console.log(`balance    ${fmt(balance)}`);
 
   if (!deployed && balance === 0n) {
-    console.log(`\nFund this address with Sepolia STRK, then run --deploy:`);
-    console.log(`  https://faucet.starknet.io/   (official, Starknet Foundation)`);
-    console.log(`  address: ${address}`);
+    if (MAINNET) {
+      console.log(`\nSend mainnet STRK to this address, then run --deploy --mainnet:`);
+      console.log(`  address: ${address}`);
+      console.log(`  50 STRK covers the whole deployment and costs about a dollar.`);
+    } else {
+      console.log(`\nFund this address with Sepolia STRK, then run --deploy:`);
+      console.log(`  npx tsx scripts/faucet.ts`);
+      console.log(`  or https://faucet.starknet.io/`);
+      console.log(`  address: ${address}`);
+    }
     return;
   }
 
