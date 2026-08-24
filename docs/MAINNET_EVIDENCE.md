@@ -36,9 +36,11 @@ Current count: **0 of 3**.
 | Mainnet authorization | none |
 | Mainnet revocation | none |
 | Deployer | `0x47366fff6d7da5f313cf6a379f460c8544db248231a532e533afd588d801aca` |
-| Deployer balance | 0.0000 STRK |
+| Deployer STRK | 0.0000 |
+| Deployer ETH | 0.001027 |
 
-Blocked by funding only. The deployment path is written, rehearsed end to end
+Blocked by fee-token mismatch, not by an empty account. See
+[Funding reconciliation](#funding-reconciliation). The deployment path is written, rehearsed end to end
 on Sepolia, and captures its own deployment block for the event-scan floor. See
 [docs/DEV_EVIDENCE.md](./DEV_EVIDENCE.md) for the Sepolia rehearsal, which is
 development evidence and is deliberately not listed here.
@@ -55,6 +57,41 @@ tested: `createDisclosure`, the V2 snapshot commitment, the consent preview, the
 walletless proof page, and the registry lifecycle.
 
 ---
+
+# Funding reconciliation
+
+The account **was** funded, with **ETH rather than STRK**.
+
+Verified at mainnet block ~13,812,010 by direct `balanceOf` on three
+independent RPCs (Cartridge, Lava, Alchemy), all agreeing:
+
+| Token | Balance |
+| --- | --- |
+| STRK | 0.000000 |
+| ETH | 0.001027 |
+
+The account is still undeployed (`Contract not found`), which is expected for a
+counterfactual address that has never sent a transaction.
+
+**Why ETH cannot be used directly.** starknet.js builds V3 transactions only
+(`transactionVersion: ETransactionVersion.V3`), and V3 resource bounds are
+denominated in FRI, which is STRK. There is no ETH fee path.
+
+**Why a paymaster does not fully solve it.** The AVNU paymaster built into
+starknet.js (`https://starknet.paymaster.avnu.fi`) answers without an API key
+and does accept ETH as a gas token, confirmed against its live
+`paymaster_getSupportedTokens`. But its transaction union is
+`Deploy | Invoke | DeployAndInvoke`: **a paymaster cannot carry a DECLARE**, and
+declaring the registry class is exactly what the deployment needs. So the
+paymaster could deploy the account and run `authorize` and `revoke`, and cannot
+publish the contract class.
+
+**What would resolve it**, cheapest first:
+
+1. Send roughly **50 STRK** (about a dollar) to the deployer. One step.
+2. Swap the existing ETH to STRK. Enough value is present, but executing a swap
+   is a financial trade and is not something this agent performs; a human can do
+   it in a wallet in under a minute.
 
 # The proving blocker
 
@@ -99,24 +136,66 @@ So the two routes fail for opposite reasons:
 - **Wallet route:** can transact, cannot be read by Lens.
 - **SDK route:** can be read by Lens, cannot transact without a prover.
 
+## Screening is a second, separate blocker for deposits
+
+Read from the live mainnet pool during this phase:
+
+| Call | Value |
+| --- | --- |
+| `get_version` | `2.0` |
+| `get_screener_public_key` | set, non-zero (`0x501cc452…`) |
+| `get_fee_amount` | `6.0 STRK` per pool operation |
+
+`apply_actions` takes a `ScreeningAttestation`, and the docs are explicit that
+screening applies on every route: *"a self-hosted prover meets the same
+deposit-screening requirement as hosted services."* The attestation is signed by
+the screener whose public key is set above, which no builder can produce.
+
+So a self-hosted prover does **not** unblock this project. Without a screened
+deposit there is nothing in the pool to transfer, and the deposit is the step
+that needs the attestation. The hosted service is required for screening, not
+merely for convenience.
+
+Also worth recording for budgeting: at 6 STRK per pool operation, three
+live-pool transactions cost **18 STRK in pool fees alone**, before gas.
+
+## The indexer is not a blocker
+
+Removed from this list after checking. The SDK ships
+`ContractDiscoveryProvider`, which reads the pool directly over RPC with no
+hosted indexer, and the factory documents `new ContractDiscoveryProvider(pool)`.
+
+Lens does not need it either way: `read.ts` and `channels.ts` already walk the
+pool over plain RPC, which is the same approach. No indexer dependency exists or
+is planned.
+
 ## What would unblock it
 
 Any one of:
 
-1. A proving service URL for mainnet, and the matching indexer or discovery URL.
-2. Confirmation that a self-hosted prover is expected, plus whatever
-   configuration it needs. The crate is open source at
-   `starkware-libs/sequencer/crates/starknet_transaction_prover`, and running it
-   is an infrastructure commitment rather than a configuration change.
-3. A Wallet API method that lets a dapp use the wallet as a proving backend for
-   an SDK-built transaction, which does not exist today.
+1. A proving service URL for mainnet, **plus** a way to obtain a screening
+   attestation for the first deposit. Both come from the hosted service today.
+2. A Wallet API method letting a dapp use the wallet as a proving backend for an
+   SDK-built transaction, which does not exist.
+
+Self-hosting is **rejected**, not deferred. The prover crate is open source at
+`starkware-libs/sequencer/crates/starknet_transaction_prover`, but running it
+does not produce a screening attestation, and the deposit cannot be accepted
+without one. Standing up prover infrastructure would leave the project exactly
+as blocked as it is now, at considerable cost.
 
 Exact question for the sprint channel:
 
-> What proving service URL and indexer URL should a sprint team use for
-> `ProvingServiceProofProvider` on mainnet and Sepolia? The demo `.env`
-> examples list both as TODO, and the privacy-bridge repo reads them from env
-> with no default.
+> I am building for the STRK20 Private Sprint and need to create genuine
+> mainnet private-transfer activity using the Privacy SDK with my own
+> `viewingKeyProvider`. I can use `ContractDiscoveryProvider` directly against
+> the pool, so discovery is not a blocker. Two questions. What is the currently
+> supported hosted proving-service URL and configuration for the mainnet pool?
+> And since `get_screener_public_key` is set on the mainnet pool and
+> `apply_actions` takes a `ScreeningAttestation`, how does a builder obtain a
+> screening attestation for a deposit? If self-hosted provers are allowed, which
+> prover version matches pool version 2.0, and does self-hosting still require
+> the hosted screening service?
 
 ---
 
