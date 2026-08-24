@@ -11,3 +11,6 @@ export * from "./rewrite";
 export * from "./fetch";
 export * from "./fixture";
 export * from "./clock";
+export * from "./disclose";
+export * from "./transport";
+export * from "./registry";

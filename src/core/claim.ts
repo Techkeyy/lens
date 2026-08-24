@@ -12,16 +12,18 @@
  * the Holder, the employer is the Counterparty, the landlord is the Verifier,
  * and the employer never participates in the disclosure at all.
  *
- * The subtle part is identity. A channel key on its own proves only that notes
- * exist at some storage locations; it says nothing about who paid whom, since
- * `channel_key = h(TAG, sender, sender_viewing_key, recipient, recipient_pub)`
- * cannot be inverted and the Verifier holds no keys.
+ * Two things make a claim sound.
  *
- * The pool closes that gap. `channel_exists(channel_marker)` is a public view,
- * and the marker is computed from the channel key plus both addresses and the
- * recipient's registered public key. If the pool says that marker exists, the
- * pool is attesting that this key belongs to that exact pair, in that
- * direction. That is what makes a claim sound without a circuit.
+ * **Identity binding.** A channel key on its own proves only that notes exist
+ * at some storage locations. `channel_exists(channel_marker)` is a public view,
+ * and the marker covers the channel key plus both addresses and the recipient's
+ * registered public key, so if the pool says it exists, the pool is attesting
+ * that this key belongs to that pair in that direction.
+ *
+ * **The snapshot boundary.** Verification reads exactly the notes the Holder
+ * authorized, indices 0..noteCount-1, and never walks past them. Payments that
+ * arrive later sit at higher indices: they cannot join the authorized set, and
+ * they cannot break it either.
  */
 
 import {
@@ -30,18 +32,18 @@ import {
   computeSubchannelMarker,
   toFelt,
 } from "./derive";
-import { type NoteReader, type ReadNote, scanSubchannel, totalAmount } from "./read";
+import { type NoteReader, type ReadNote, countNotes, scanRange, totalAmount } from "./read";
+import type { Disclosure } from "./bundle";
 
 export type Direction = "outbound" | "inbound";
 
-/** One relationship, one asset. Both lanes are optional but at least one is required. */
 export type RelationshipScope = {
   holder: string;
   counterparty: string;
   token: string;
 };
 
-/** The key material a disclosure actually hands over, per lane. */
+/** The key material a disclosure hands over, per lane. Reusable. */
 export type LaneKeys = {
   /** Holder paid Counterparty. */
   outbound?: string;
@@ -51,8 +53,11 @@ export type LaneKeys = {
 
 export type VerifiedLane = {
   direction: Direction;
+  /** Exactly the authorized notes. Never more. */
   notes: ReadNote[];
   total: bigint;
+  /** Notes now sitting past the authorized boundary. Not part of the claim. */
+  laterNoteCount: number;
 };
 
 export type DisclosureFailure =
@@ -60,8 +65,11 @@ export type DisclosureFailure =
   | "unregistered-holder"
   | "unregistered-counterparty"
   | "lane-not-in-pool"
-  | "no-notes"
-  | "total-mismatch";
+  | "asset-not-in-lane"
+  | "missing-note"
+  | "lane-total-mismatch"
+  | "total-mismatch"
+  | "empty-snapshot";
 
 export type DisclosureResult = {
   verified: boolean;
@@ -72,6 +80,15 @@ export type DisclosureResult = {
   total: bigint;
   /** True once the pool has confirmed every supplied key belongs to this pair. */
   identityBound: boolean;
+  /**
+   * Payments exist in this relationship that the Holder did not authorize.
+   *
+   * They are excluded from every figure above. A Verifier holding the reusable
+   * channel key could read them independently, which is why this is surfaced
+   * rather than hidden: the UI must show them as later activity, never as
+   * Holder-approved history.
+   */
+  laterActivityDetected: boolean;
 };
 
 function fail(
@@ -79,47 +96,41 @@ function fail(
   reason: string,
   extra: Partial<DisclosureResult> = {},
 ): DisclosureResult {
-  return { verified: false, failure, reason, lanes: [], total: 0n, identityBound: false, ...extra };
+  return {
+    verified: false,
+    failure,
+    reason,
+    lanes: [],
+    total: 0n,
+    identityBound: false,
+    laterActivityDetected: false,
+    ...extra,
+  };
 }
 
 /**
- * Ask the pool to confirm a key belongs to a named sender and recipient.
+ * Verify the authorized snapshot of a relationship disclosure.
  *
- * This is the step that turns "some notes exist" into "these are payments
- * between these two addresses". Without it, anyone could fund a lane of their
- * own and present it as someone else's payment.
- */
-async function laneIsReal(
-  reader: NoteReader,
-  channelKey: Felt,
-  sender: Felt,
-  recipient: Felt,
-  recipientPublicKey: bigint,
-): Promise<boolean> {
-  const marker = computeChannelMarker(channelKey, sender, recipient, recipientPublicKey);
-  return reader.channelExists(marker);
-}
-
-/**
- * Verify a relationship disclosure, one or both directions.
+ * Every read is a public view, so a Verifier needs no wallet, no account and no
+ * permission from anyone.
  *
- * Every read here is a public view, so a Verifier needs no wallet, no account
- * and no permission from anyone.
+ * This checks the disclosure against the pool. It does **not** check the
+ * on-chain authorization or its status: that is `registry.ts`, and a complete
+ * verification runs both.
  */
 export async function verifyDisclosure(
   reader: NoteReader,
-  scope: RelationshipScope,
-  keys: LaneKeys,
-  assertedTotal: bigint,
+  disclosure: Disclosure,
 ): Promise<DisclosureResult> {
-  const { holder, counterparty, token } = scope;
+  const { holder, counterparty, token } = disclosure.scope;
+  const keys = disclosure.keys;
 
   if (!keys.outbound && !keys.inbound) {
     return fail("no-lanes", "This disclosure contains no payment relationship to check.");
   }
 
-  // Both public keys are read from the pool, never taken from the disclosure,
-  // so a forged disclosure cannot supply its own.
+  // Both public keys come from the pool, never from the disclosure, so a
+  // forged disclosure cannot supply its own.
   const holderPublicKey = await reader.getPublicKey(holder);
   const counterpartyPublicKey = await reader.getPublicKey(counterparty);
 
@@ -142,12 +153,21 @@ export async function verifyDisclosure(
     const channelKey = keys[direction];
     if (!channelKey) continue;
 
+    const lane = disclosure.snapshot[direction];
+    if (!lane) {
+      return fail(
+        "empty-snapshot",
+        `The disclosure includes a ${direction} key but no snapshot boundary for it, so there is nothing well defined to verify.`,
+      );
+    }
+
     const sender = direction === "outbound" ? holder : counterparty;
     const recipient = direction === "outbound" ? counterparty : holder;
     const recipientPublicKey =
       direction === "outbound" ? counterpartyPublicKey : holderPublicKey;
 
-    if (!(await laneIsReal(reader, channelKey, sender, recipient, recipientPublicKey))) {
+    const marker = computeChannelMarker(channelKey, sender, recipient, recipientPublicKey);
+    if (!(await reader.channelExists(marker))) {
       return fail(
         "lane-not-in-pool",
         `The pool has no ${direction} payment lane from ${short(sender)} to ${short(
@@ -157,29 +177,54 @@ export async function verifyDisclosure(
     }
 
     const subMarker = computeSubchannelMarker(channelKey, recipient, recipientPublicKey, token);
-    if (!(await reader.subchannelExists(subMarker))) {
-      // A registered lane holding nothing in this asset is a real state, not a
-      // failure. Record it as empty and carry on to the other direction.
-      lanes.push({ direction, notes: [], total: 0n });
-      continue;
+    if (lane.noteCount > 0 && !(await reader.subchannelExists(subMarker))) {
+      return fail(
+        "asset-not-in-lane",
+        `That relationship exists, but the pool holds nothing for it in this asset.`,
+        { identityBound: true },
+      );
     }
 
-    const notes = await scanSubchannel(reader, channelKey, token);
-    lanes.push({ direction, notes, total: totalAmount(notes) });
+    // Exactly the authorized range. Never a note more.
+    const { notes, missingIndex } = await scanRange(reader, channelKey, token, lane.noteCount);
+    if (missingIndex !== undefined) {
+      return fail(
+        "missing-note",
+        `This disclosure claims ${lane.noteCount} ${direction} payments, but payment ${
+          missingIndex + 1
+        } is not in the pool.`,
+        { identityBound: true },
+      );
+    }
+
+    const total = totalAmount(notes);
+    if (total !== BigInt(lane.total)) {
+      return fail(
+        "lane-total-mismatch",
+        `The ${direction} payments total ${total} on chain, and this disclosure claims ${lane.total}.`,
+        { identityBound: true },
+      );
+    }
+
+    // Look one index past the boundary. Cheap, and it is the whole basis of the
+    // "later activity" distinction.
+    const nowCount = await countNotes(reader, channelKey, token, lane.noteCount + 64);
+    lanes.push({
+      direction,
+      notes,
+      total,
+      laterNoteCount: Math.max(0, nowCount - lane.noteCount),
+    });
   }
 
   const total = lanes.reduce((sum, l) => sum + l.total, 0n);
-  const noteCount = lanes.reduce((n, l) => n + l.notes.length, 0);
-  const base = { lanes, total, identityBound: true };
+  const laterActivityDetected = lanes.some((l) => l.laterNoteCount > 0);
+  const base = { lanes, total, identityBound: true, laterActivityDetected };
 
-  if (noteCount === 0) {
-    return fail("no-notes", "The relationship is registered with the pool but holds no payments.", base);
-  }
-
-  if (total !== assertedTotal) {
+  if (total !== BigInt(disclosure.assertedTotal)) {
     return fail(
       "total-mismatch",
-      `The chain says ${total}, this disclosure claims ${assertedTotal}.`,
+      `The authorized payments total ${total} on chain, and this disclosure claims ${disclosure.assertedTotal}.`,
       base,
     );
   }
@@ -194,44 +239,56 @@ function describe(lanes: VerifiedLane[], holder: string, counterparty: string): 
       (l) =>
         `${l.notes.length} ${l.direction === "inbound" ? "received" : "sent"} totalling ${l.total}`,
     );
-  return `The pool confirms payments between ${short(holder)} and ${short(
+  return `The pool confirms the authorized payments between ${short(holder)} and ${short(
     counterparty,
   )}: ${parts.join(", ")}.`;
 }
 
 /**
- * What this disclosure exposes beyond the question that was asked.
+ * Warnings the Holder must see before approving, and the Verifier must see
+ * when reading.
  *
- * The Holder sees this before approving. It is deliberately blunt: a consent
- * screen that undersells the boundary is worse than no consent screen, because
- * it manufactures confidence rather than informing a decision.
+ * Centralised here so no interface can invent softer wording. Every sentence is
+ * something the implementation actually does or actually cannot do.
  */
+export const WARNINGS = {
+  bearer:
+    "This disclosure is a bearer credential. Anyone who receives this link or bundle can inspect the information it contains.",
+  revocation:
+    "Revoking the disclosure changes its authorization status. It cannot erase information or channel keys already received.",
+  reusableKey:
+    "The key in this disclosure keeps working. Whoever holds it can read this relationship later, including payments made after today.",
+  relationshipScope:
+    "A disclosure covers the whole relationship with this address for this asset. It cannot be narrowed to a single payment.",
+  noAbsenceProof:
+    "This proves the payments it shows happened. It cannot prove that other payments did not.",
+  noProvenDates:
+    "Lens does not filter by date. Any period mentioned in the request is context from the requester, not a cryptographic constraint.",
+} as const;
+
+/** What a Holder is about to reveal, in plain words, before they approve. */
 export function exposure(
-  lanes: VerifiedLane[],
-  asked?: { fromTime?: number; toTime?: number; noteCount?: number },
+  lanes: { direction: Direction; noteCount: number }[],
+  asked?: { noteCount?: number },
 ): string[] {
   const warnings: string[] = [];
-  const total = lanes.reduce((n, l) => n + l.notes.length, 0);
+  const total = lanes.reduce((n, l) => n + l.noteCount, 0);
 
   if (asked?.noteCount !== undefined && total > asked.noteCount) {
     warnings.push(
       `The requester asked about ${asked.noteCount} payment${
         asked.noteCount === 1 ? "" : "s"
-      }, but this relationship contains ${total}. This mechanism works at relationship level, not payment level, so approving reveals all ${total}.`,
+      }, and this relationship contains ${total}. Approving reveals all ${total}.`,
     );
   }
 
-  const directions = lanes.filter((l) => l.notes.length > 0).map((l) => l.direction);
-  if (directions.length === 2) {
+  if (lanes.filter((l) => l.noteCount > 0).length === 2) {
     warnings.push(
       "Both directions are included: payments you received from this address and payments you sent to it.",
     );
   }
 
-  warnings.push(
-    "A channel key opens the whole relationship with this address for this asset. It cannot be narrowed to a single payment.",
-  );
-
+  warnings.push(WARNINGS.relationshipScope, WARNINGS.bearer, WARNINGS.reusableKey);
   return warnings;
 }
 

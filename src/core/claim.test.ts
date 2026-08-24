@@ -1,267 +1,186 @@
 /**
- * The security boundary, tested.
+ * Identity binding, which is what stops a disclosure from being a lie.
  *
- * The cases that matter are the dishonest ones. A Holder who funds a lane of
- * their own and presents it as someone else's payment must fail. A disclosure
- * whose numbers do not match the chain must fail. And a disclosure must never
- * be able to reach a relationship it does not name.
+ * A channel key proves notes exist somewhere. It says nothing about who paid
+ * whom. These tests cover the cases where someone tries to exploit that gap.
+ *
+ * Snapshot behaviour lives in snapshot.test.ts.
  */
 
 import { describe, expect, it } from "vitest";
-import {
-  computeChannelKey,
-  computeChannelMarker,
-  computeNoteId,
-  computeSubchannelMarker,
-  encryptNoteAmount,
-  type Felt,
-} from "./derive";
-import type { NoteReader, StoredNote } from "./read";
-import { exposure, verifyDisclosure } from "./claim";
+import { WARNINGS, exposure, verifyDisclosure } from "./claim";
+import { DISCLOSURE_SCHEME, type Disclosure } from "./bundle";
+import { computeChannelKey } from "./derive";
+import { publicViewingKey } from "./session";
+import { FakePool, twoPartyWorld } from "./testing/fakePool";
 
-const ALICE = "0x0a11ce"; // Holder
-const ALICE_VK = "0x0a11cekey".replace("key", "");
-const EMPLOYER = "0x0e11907e2"; // Counterparty
-const LANDLORD = "0x01a4d10rd".replace("rd", ""); // Verifier, holds no keys
+const ALICE = "0x0a11ce";
+const EMPLOYER = "0x0e11907e2";
 const MALLORY = "0x0badbad";
 const USDC = "0x053c91253bc9682c04929ca02ed00b3e423f6710d2ee7e0d5ebb06f3ecf368a8";
+const ALICE_VK = 0x0a11ce5eecen;
+const EMPLOYER_VK = 0x0e11907e25ecn;
 
-const ALICE_VIEWING = 0x11111n;
-const ALICE_PUB = 0x22222n;
-const EMPLOYER_VIEWING = 0x33333n;
-const EMPLOYER_PUB = 0x44444n;
-
-/** Employer -> Alice. Alice recovers this by ECDH in the real flow. */
-const INBOUND = computeChannelKey(EMPLOYER, EMPLOYER_VIEWING, ALICE, ALICE_PUB);
-/** Alice -> Employer. */
-const OUTBOUND = computeChannelKey(ALICE, ALICE_VIEWING, EMPLOYER, EMPLOYER_PUB);
-
-type Lane = { key: bigint; sender: Felt; recipient: Felt; recipientPub: bigint };
-type Note = { key: bigint; index: number; amount: bigint };
-
-/** A pool that only recognises lanes actually registered to a given pair. */
-function fakePool(opts: {
-  lanes?: Lane[];
-  notes?: Note[];
-  publicKeys?: Record<string, bigint>;
-  token?: Felt;
-}): NoteReader {
-  const token = opts.token ?? USDC;
-  const channels = new Set(
-    (opts.lanes ?? []).map((l) =>
-      computeChannelMarker(l.key, l.sender, l.recipient, l.recipientPub).toString(),
-    ),
-  );
-  const subchannels = new Set(
-    (opts.lanes ?? []).map((l) =>
-      computeSubchannelMarker(l.key, l.recipient, l.recipientPub, token).toString(),
-    ),
-  );
-  const store = new Map<string, StoredNote>();
-  for (const n of opts.notes ?? []) {
-    const noteId = computeNoteId(n.key, token, n.index);
-    store.set(noteId.toString(), {
-      index: -1,
-      noteId,
-      packedValue: encryptNoteAmount(n.key, token, n.index, BigInt(77 + n.index), n.amount),
-      storedToken: 0n,
-    });
-  }
-  const keys = opts.publicKeys ?? {
-    [BigInt(ALICE).toString()]: ALICE_PUB,
-    [BigInt(EMPLOYER).toString()]: EMPLOYER_PUB,
-  };
+function disclosureFor(keys: Disclosure["keys"], snapshot: Disclosure["snapshot"], total: string): Disclosure {
   return {
-    async getNote(id) {
-      return store.get(BigInt(id).toString());
-    },
-    async nullifierExists() {
-      return false;
-    },
-    async getPublicKey(addr) {
-      return keys[BigInt(addr).toString()] ?? 0n;
-    },
-    async channelExists(m) {
-      return channels.has(BigInt(m).toString());
-    },
-    async subchannelExists(m) {
-      return subchannels.has(BigInt(m).toString());
-    },
-    async getNumOfChannels() {
-      return 0;
-    },
-    async getChannelInfo() {
-      return { ephemeralPubkey: 0n, encChannelKey: 0n, encSenderAddr: 0n };
-    },
+    scheme: DISCLOSURE_SCHEME,
+    chainId: "0x534e5f5345504f4c4941",
+    pool: "0x0254a6b2997ef52e9f830ce1f543f6b29768295e8d17e2267d672c552cfe0d91",
+    requestCommitment: "0x0",
+    scope: { holder: ALICE, counterparty: EMPLOYER, token: USDC },
+    directions: (["outbound", "inbound"] as const).filter((d) => keys[d] !== undefined),
+    keys,
+    snapshot,
+    assertedTotal: total,
+    createdAt: 1_724_000_000,
   };
 }
 
-const inboundLane: Lane = {
-  key: INBOUND,
-  sender: EMPLOYER,
-  recipient: ALICE,
-  recipientPub: ALICE_PUB,
-};
-const outboundLane: Lane = {
-  key: OUTBOUND,
-  sender: ALICE,
-  recipient: EMPLOYER,
-  recipientPub: EMPLOYER_PUB,
-};
-
-const scope = { holder: ALICE, counterparty: EMPLOYER, token: USDC };
 const hex = (v: bigint) => "0x" + v.toString(16);
 
-describe("verifyDisclosure, salary received", () => {
-  it("verifies three payments from the employer", async () => {
-    const pool = fakePool({
-      lanes: [inboundLane],
-      notes: [
-        { key: INBOUND, index: 0, amount: 3000n },
-        { key: INBOUND, index: 1, amount: 3000n },
-        { key: INBOUND, index: 2, amount: 3200n },
-      ],
+describe("identity binding", () => {
+  it("verifies a lane the pool attests to", async () => {
+    const { pool, inbound } = twoPartyWorld({
+      holder: ALICE,
+      holderViewingKey: ALICE_VK,
+      counterparty: EMPLOYER,
+      counterpartyViewingKey: EMPLOYER_VK,
+      token: USDC,
     });
-    const r = await verifyDisclosure(pool, scope, { inbound: hex(INBOUND) }, 9200n);
-    expect(r.verified).toBe(true);
-    expect(r.identityBound).toBe(true);
-    expect(r.lanes[0].direction).toBe("inbound");
-    expect(r.lanes[0].notes).toHaveLength(3);
-    expect(r.total).toBe(9200n);
-  });
-
-  it("rejects a total that does not match the chain, and reports the real one", async () => {
-    const pool = fakePool({
-      lanes: [inboundLane],
-      notes: [{ key: INBOUND, index: 0, amount: 3000n }],
-    });
-    const r = await verifyDisclosure(pool, scope, { inbound: hex(INBOUND) }, 99999n);
-    expect(r.verified).toBe(false);
-    expect(r.failure).toBe("total-mismatch");
-    expect(r.total).toBe(3000n);
-  });
-});
-
-describe("both directions", () => {
-  it("combines received and sent into one relationship", async () => {
-    const pool = fakePool({
-      lanes: [inboundLane, outboundLane],
-      notes: [
-        { key: INBOUND, index: 0, amount: 3000n },
-        { key: OUTBOUND, index: 0, amount: 250n },
-      ],
-    });
+    pool.pay(inbound, USDC, 3000n);
     const r = await verifyDisclosure(
       pool,
-      scope,
-      { inbound: hex(INBOUND), outbound: hex(OUTBOUND) },
-      3250n,
+      disclosureFor({ inbound: hex(inbound) }, { inbound: { noteCount: 1, total: "3000" } }, "3000"),
     );
     expect(r.verified).toBe(true);
-    expect(r.lanes.map((l) => l.direction)).toEqual(["outbound", "inbound"]);
-    expect(r.total).toBe(3250n);
+    expect(r.identityBound).toBe(true);
   });
 
-  it("accepts a relationship where money only ever flowed one way", async () => {
-    const pool = fakePool({
-      lanes: [inboundLane],
-      notes: [{ key: INBOUND, index: 0, amount: 500n }],
-    });
-    const r = await verifyDisclosure(pool, scope, { inbound: hex(INBOUND) }, 500n);
-    expect(r.verified).toBe(true);
-    expect(r.lanes).toHaveLength(1);
-  });
+  it("refuses a lane funded by a third party and attributed to the employer", async () => {
+    // Mallory opens her own lane to Alice, funds it, and Alice tries to pass it
+    // off as the employer paying her. The notes are real; the attribution is not.
+    const pool = new FakePool();
+    const alicePub = pool.register(ALICE, ALICE_VK);
+    pool.register(EMPLOYER, EMPLOYER_VK);
+    const forged = computeChannelKey(MALLORY, 0x9999n, ALICE, alicePub);
+    pool.openLane(
+      { key: forged, sender: MALLORY, recipient: ALICE, recipientPub: alicePub },
+      USDC,
+    );
+    pool.pay(forged, USDC, 50_000n);
 
-  it("refuses an inbound key presented as an outbound one", async () => {
-    // Same key, wrong direction. The marker will not exist, because the pool
-    // registered it for employer -> alice, not alice -> employer.
-    const pool = fakePool({
-      lanes: [inboundLane],
-      notes: [{ key: INBOUND, index: 0, amount: 500n }],
-    });
-    const r = await verifyDisclosure(pool, scope, { outbound: hex(INBOUND) }, 500n);
-    expect(r.verified).toBe(false);
-    expect(r.failure).toBe("lane-not-in-pool");
-  });
-});
-
-describe("forgery", () => {
-  it("refuses a lane funded by someone else and attributed to the employer", async () => {
-    const forged = computeChannelKey(MALLORY, 0x9999n, ALICE, ALICE_PUB);
-    const pool = fakePool({
-      lanes: [{ key: forged, sender: MALLORY, recipient: ALICE, recipientPub: ALICE_PUB }],
-      notes: [{ key: forged, index: 0, amount: 50000n }],
-    });
-    const r = await verifyDisclosure(pool, scope, { inbound: hex(forged) }, 50000n);
+    const r = await verifyDisclosure(
+      pool,
+      disclosureFor({ inbound: hex(forged) }, { inbound: { noteCount: 1, total: "50000" } }, "50000"),
+    );
     expect(r.verified).toBe(false);
     expect(r.failure).toBe("lane-not-in-pool");
     expect(r.identityBound).toBe(false);
   });
 
+  it("refuses an inbound key presented as an outbound one", async () => {
+    const { pool, inbound } = twoPartyWorld({
+      holder: ALICE,
+      holderViewingKey: ALICE_VK,
+      counterparty: EMPLOYER,
+      counterpartyViewingKey: EMPLOYER_VK,
+      token: USDC,
+    });
+    pool.pay(inbound, USDC, 500n);
+    const r = await verifyDisclosure(
+      pool,
+      disclosureFor({ outbound: hex(inbound) }, { outbound: { noteCount: 1, total: "500" } }, "500"),
+    );
+    expect(r.failure).toBe("lane-not-in-pool");
+  });
+
   it("refuses a counterparty that never registered", async () => {
-    const pool = fakePool({ publicKeys: { [BigInt(ALICE).toString()]: ALICE_PUB } });
-    const r = await verifyDisclosure(pool, scope, { outbound: hex(OUTBOUND) }, 0n);
+    const pool = new FakePool();
+    pool.register(ALICE, ALICE_VK);
+    const r = await verifyDisclosure(
+      pool,
+      disclosureFor({ outbound: "0xabc" }, { outbound: { noteCount: 0, total: "0" } }, "0"),
+    );
     expect(r.failure).toBe("unregistered-counterparty");
   });
 
   it("refuses a holder that never registered", async () => {
-    const pool = fakePool({ publicKeys: { [BigInt(EMPLOYER).toString()]: EMPLOYER_PUB } });
-    const r = await verifyDisclosure(pool, scope, { inbound: hex(INBOUND) }, 0n);
+    const pool = new FakePool();
+    pool.register(EMPLOYER, EMPLOYER_VK);
+    const r = await verifyDisclosure(
+      pool,
+      disclosureFor({ inbound: "0xabc" }, { inbound: { noteCount: 0, total: "0" } }, "0"),
+    );
     expect(r.failure).toBe("unregistered-holder");
   });
 
-  it("refuses a disclosure with no lanes at all", async () => {
-    const r = await verifyDisclosure(fakePool({}), scope, {}, 0n);
+  it("refuses a disclosure with no lanes", async () => {
+    const r = await verifyDisclosure(new FakePool(), disclosureFor({}, {}, "0"));
     expect(r.failure).toBe("no-lanes");
   });
 
-  it("reports an empty relationship rather than pretending it verified", async () => {
-    const pool = fakePool({ lanes: [inboundLane] });
-    const r = await verifyDisclosure(pool, scope, { inbound: hex(INBOUND) }, 0n);
-    expect(r.verified).toBe(false);
-    expect(r.failure).toBe("no-notes");
-    expect(r.identityBound).toBe(true);
+  it("refuses a key with no snapshot boundary behind it", async () => {
+    const { pool, inbound } = twoPartyWorld({
+      holder: ALICE,
+      holderViewingKey: ALICE_VK,
+      counterparty: EMPLOYER,
+      counterpartyViewingKey: EMPLOYER_VK,
+      token: USDC,
+    });
+    pool.pay(inbound, USDC, 1n);
+    const r = await verifyDisclosure(pool, disclosureFor({ inbound: hex(inbound) }, {}, "1"));
+    expect(r.failure).toBe("empty-snapshot");
   });
 
   it("cannot reach a different counterparty's relationship", async () => {
-    // Alice also has a lane with a second employer. Disclosing the first must
-    // not expose the second, and the keys are unrelated.
-    const other = computeChannelKey("0x0c11e17", 0x5555n, ALICE, ALICE_PUB);
-    expect(other).not.toBe(INBOUND);
-    const pool = fakePool({
-      lanes: [inboundLane],
-      notes: [
-        { key: INBOUND, index: 0, amount: 100n },
-        { key: other, index: 0, amount: 999999n },
-      ],
+    const { pool, inbound } = twoPartyWorld({
+      holder: ALICE,
+      holderViewingKey: ALICE_VK,
+      counterparty: EMPLOYER,
+      counterpartyViewingKey: EMPLOYER_VK,
+      token: USDC,
     });
-    const r = await verifyDisclosure(pool, scope, { inbound: hex(INBOUND) }, 100n);
+    const otherClient = computeChannelKey("0x0c11e17", 0x5555n, ALICE, publicViewingKey(ALICE_VK));
+    pool.pay(inbound, USDC, 100n);
+    pool.pay(otherClient, USDC, 999_999n);
+
+    const r = await verifyDisclosure(
+      pool,
+      disclosureFor({ inbound: hex(inbound) }, { inbound: { noteCount: 1, total: "100" } }, "100"),
+    );
     expect(r.verified).toBe(true);
     expect(r.total).toBe(100n);
   });
 });
 
-describe("exposure preview", () => {
-  const lanes = [
-    { direction: "inbound" as const, notes: [{}, {}, {}, {}, {}, {}] as never[], total: 6n },
-  ];
-
-  it("warns when the relationship is wider than the period asked about", () => {
-    const w = exposure(lanes, { noteCount: 4 }).join(" ");
+describe("consent wording", () => {
+  it("warns when the relationship is wider than the question", () => {
+    const w = exposure([{ direction: "inbound", noteCount: 6 }], { noteCount: 4 }).join(" ");
     expect(w).toContain("asked about 4");
     expect(w).toContain("contains 6");
-    expect(w).toContain("relationship level, not payment level");
   });
 
   it("says when both directions are included", () => {
-    const both = [
-      { direction: "outbound" as const, notes: [{}] as never[], total: 1n },
-      { direction: "inbound" as const, notes: [{}] as never[], total: 1n },
-    ];
-    expect(exposure(both).join(" ")).toContain("Both directions");
+    const w = exposure([
+      { direction: "outbound", noteCount: 1 },
+      { direction: "inbound", noteCount: 1 },
+    ]).join(" ");
+    expect(w).toContain("Both directions");
   });
 
-  it("always states the relationship-level limit", () => {
-    expect(exposure(lanes).join(" ")).toContain("cannot be narrowed to a single payment");
+  it("always states relationship scope, bearer nature and key reuse", () => {
+    const w = exposure([{ direction: "inbound", noteCount: 2 }]).join(" ");
+    expect(w).toContain("cannot be narrowed to a single payment");
+    expect(w).toContain("bearer credential");
+    expect(w).toContain("keeps working");
+  });
+
+  it("never promises that revocation erases anything", () => {
+    expect(WARNINGS.revocation).toContain("cannot erase");
+    expect(WARNINGS.revocation).not.toMatch(/stops working|expires|disabled/i);
+  });
+
+  it("does not claim dates are proven", () => {
+    expect(WARNINGS.noProvenDates).toContain("not a cryptographic constraint");
   });
 });

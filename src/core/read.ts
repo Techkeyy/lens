@@ -174,3 +174,50 @@ export async function spentStatus(
 export function totalAmount(notes: ReadNote[]): bigint {
   return notes.reduce((sum, n) => sum + n.amount, 0n);
 }
+
+/**
+ * Read exactly the first `count` notes of a lane.
+ *
+ * This is what verification uses. Notes live in WriteOnce cells at dense
+ * sequential indices, so indices 0..count-1 name the same notes forever: a
+ * count taken at authorization time is a permanent boundary, and payments
+ * arriving later land at higher indices where this never looks.
+ *
+ * A gap inside the range means the disclosure named notes that are not there,
+ * which is a failure rather than an empty result.
+ */
+export async function scanRange(
+  reader: NoteReader,
+  channelKey: Felt,
+  token: Felt,
+  count: number,
+): Promise<{ notes: ReadNote[]; missingIndex?: number }> {
+  const notes: ReadNote[] = [];
+  for (let index = 0; index < count; index++) {
+    const noteId = computeNoteId(channelKey, token, index);
+    const stored = await reader.getNote(noteId);
+    if (!stored) return { notes, missingIndex: index };
+    const { amount, salt } = decryptNoteAmount(stored.packedValue, channelKey, token, index);
+    notes.push({ ...stored, index, amount, salt });
+  }
+  return { notes };
+}
+
+/**
+ * How many notes the lane holds right now.
+ *
+ * Used at authorization time to fix the boundary, and afterwards only to tell
+ * a Verifier that later activity exists. It never changes what was authorized.
+ */
+export async function countNotes(
+  reader: NoteReader,
+  channelKey: Felt,
+  token: Felt,
+  max = 256,
+): Promise<number> {
+  for (let index = 0; index < max; index++) {
+    const stored = await reader.getNote(computeNoteId(channelKey, token, index));
+    if (!stored) return index;
+  }
+  return max;
+}

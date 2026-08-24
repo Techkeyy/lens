@@ -10,6 +10,7 @@
 import { describe, expect, it } from "vitest";
 import {
   DISCLOSURE_SCHEME,
+  DISCLOSURE_SCHEME_V1,
   REQUEST_SCHEME,
   type Disclosure,
   type Request,
@@ -39,8 +40,6 @@ const request: Request = makeRequest({
   purpose: "Proof of salary income for a tenancy application",
   counterparty: EMPLOYER,
   token: USDC,
-  fromTime: 1_719_792_000,
-  toTime: 1_722_384_000,
   nonce: "fixed-for-tests",
 });
 
@@ -52,6 +51,7 @@ const disclosure: Disclosure = {
   scope: { holder: ALICE, counterparty: EMPLOYER, token: USDC },
   directions: ["inbound"],
   keys: { inbound: "0xdef" },
+  snapshot: { inbound: { noteCount: 3, total: "9200" } },
   assertedTotal: "9200",
   createdAt: 1_724_000_000,
 };
@@ -73,6 +73,7 @@ describe("commitment", () => {
         assertedTotal: disclosure.assertedTotal,
         chainId: disclosure.chainId,
         directions: disclosure.directions,
+        snapshot: disclosure.snapshot,
         requestCommitment: disclosure.requestCommitment,
       }),
     ) as Disclosure;
@@ -83,6 +84,7 @@ describe("commitment", () => {
     const padded = normalizeDisclosure({
       ...disclosure,
       keys: { inbound: "0x0def" },
+      snapshot: { inbound: { noteCount: 3, total: "9200" } },
       scope: { ...disclosure.scope, holder: "0x00a11ce" },
     });
     expect(disclosureCommitment(padded)).toBe(disclosureCommitment(normalizeDisclosure(disclosure)));
@@ -90,8 +92,12 @@ describe("commitment", () => {
 
   it("orders directions canonically, so lane order cannot change the hash", () => {
     const keys = { inbound: "0x1", outbound: "0x2" };
-    const a: Disclosure = { ...disclosure, directions: ["inbound", "outbound"], keys };
-    const b: Disclosure = { ...disclosure, directions: ["outbound", "inbound"], keys };
+    const snapshot = {
+      inbound: { noteCount: 3, total: "9200" },
+      outbound: { noteCount: 1, total: "5" },
+    };
+    const a: Disclosure = { ...disclosure, directions: ["inbound", "outbound"], keys, snapshot };
+    const b: Disclosure = { ...disclosure, directions: ["outbound", "inbound"], keys, snapshot };
     expect(disclosureCommitment(a)).toBe(disclosureCommitment(b));
     expect(canonicalDirections(["inbound", "outbound"])).toEqual(["outbound", "inbound"]);
   });
@@ -107,6 +113,10 @@ describe("commitment", () => {
       ...disclosure,
       directions: ["outbound", "inbound"],
       keys: { inbound: "0xdef", outbound: "0xabc" },
+      snapshot: {
+        inbound: { noteCount: 3, total: "9200" },
+        outbound: { noteCount: 1, total: "5" },
+      },
     };
     expect(disclosureCommitment(both)).not.toBe(disclosureCommitment(disclosure));
   });
@@ -114,6 +124,22 @@ describe("commitment", () => {
   it("changes when the holder changes", () => {
     const impostor = { ...disclosure, scope: { ...disclosure.scope, holder: "0x0badbad" } };
     expect(disclosureCommitment(impostor)).not.toBe(disclosureCommitment(disclosure));
+  });
+
+  it("changes when the snapshot note count changes", () => {
+    const wider = {
+      ...disclosure,
+      snapshot: { inbound: { noteCount: 4, total: "9200" } },
+    };
+    expect(disclosureCommitment(wider)).not.toBe(disclosureCommitment(disclosure));
+  });
+
+  it("changes when the snapshot total changes", () => {
+    const richer = {
+      ...disclosure,
+      snapshot: { inbound: { noteCount: 3, total: "9201" } },
+    };
+    expect(disclosureCommitment(richer)).not.toBe(disclosureCommitment(disclosure));
   });
 
   it("changes when the claimed total changes", () => {
@@ -124,12 +150,6 @@ describe("commitment", () => {
 
   it("separates two otherwise identical requests by nonce", () => {
     expect(requestCommitment({ ...request, nonce: "other" })).not.toBe(requestCommitment(request));
-  });
-
-  it("commits to the requested period", () => {
-    expect(requestCommitment({ ...request, toTime: 1_722_384_001 })).not.toBe(
-      requestCommitment(request),
-    );
   });
 
   it("accepts a purpose longer than one felt", () => {
@@ -182,6 +202,16 @@ describe("links and schemes", () => {
     expect(() => decodeDisclosure(alien)).toThrow(/refused rather than guessed/);
   });
 
+  it("refuses a v1 disclosure rather than reading it as v2", () => {
+    const v1 = encodeLink({ ...disclosure, scheme: DISCLOSURE_SCHEME_V1 } as never);
+    expect(() => decodeDisclosure(v1)).toThrow(new RegExp(DISCLOSURE_SCHEME_V1));
+  });
+
+  it("refuses a v2 disclosure with no snapshot boundary", () => {
+    const noSnapshot = encodeLink({ ...disclosure, snapshot: undefined } as never);
+    expect(() => decodeDisclosure(noSnapshot)).toThrow(/no snapshot boundary/);
+  });
+
   it("refuses a request link fed to the disclosure decoder", () => {
     expect(() => decodeDisclosure(encodeLink(request))).toThrow(new RegExp(REQUEST_SCHEME));
   });
@@ -200,6 +230,7 @@ describe("the master viewing key never leaves", () => {
     ...disclosure,
     keys: { outbound: "0x" + laneKey.toString(16) },
     directions: ["outbound"],
+    snapshot: { outbound: { noteCount: 3, total: "9200" } },
   };
 
   it("is absent from the disclosure payload", () => {

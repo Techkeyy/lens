@@ -6,21 +6,34 @@
  * Neither goes on chain. Only the commitment does, which buys authorization, a
  * timestamp and integrity without publishing the payments or who asked.
  *
- * Canonicalisation is explicit and versioned. Both sides must compute the same
- * commitment byte for byte, so field order is fixed, felts are normalised, and
- * nothing depends on JSON key ordering or on how a runtime serialises. A
- * verifier that meets an unknown scheme refuses rather than guessing.
+ * # Why v2 exists
+ *
+ * v1 committed to a channel key and a total, and verification walked the lane
+ * until it ran out of notes. That was wrong in two directions at once. A
+ * payment arriving after authorization silently joined the "authorized" set,
+ * and it also changed the total, so the Holder's own disclosure stopped
+ * verifying through no fault of theirs.
+ *
+ * v2 commits to a **snapshot boundary**: how many notes each lane held at
+ * authorization time, and what they totalled. Notes live in WriteOnce cells at
+ * dense sequential indices, so indices 0..count-1 name the same notes forever.
+ * Later payments land at higher indices, outside the authorized range.
+ *
+ * This does not make Lens payment-selective. The unit is still the whole
+ * relationship as it stood at one moment.
  */
 
 import { ec } from "starknet";
 import { type Felt, toFelt } from "./derive";
 import type { Direction, LaneKeys } from "./claim";
 
-/** Bump this when the canonical form changes. Old links then fail loudly. */
-export const DISCLOSURE_SCHEME = "lens-disclosure-v1";
+/** Retired. Kept only so a v1 link is rejected loudly rather than misread. */
+export const DISCLOSURE_SCHEME_V1 = "lens-disclosure-v1";
+
+export const DISCLOSURE_SCHEME = "lens-disclosure-v2";
 export const REQUEST_SCHEME = "lens-request-v1";
 
-const DISCLOSURE_TAG = "LENS_DISCLOSURE:V1";
+const DISCLOSURE_TAG = "LENS_DISCLOSURE:V2";
 const REQUEST_TAG = "LENS_REQUEST:V1";
 
 /** One relationship, one asset. */
@@ -39,18 +52,30 @@ export type Request = {
   pool: string;
   /** Who is asking, in their own words. Shown to the Holder, never on chain. */
   requester: string;
-  /** Why. Shown before anything is revealed. */
+  /** Why. Free text context, not a cryptographic constraint. */
   purpose: string;
-  /** The Holder may be left blank when the requester does not know the address. */
   counterparty: string;
   token: string;
-  /** Unix seconds, optional. The period the Verifier cares about. */
-  fromTime?: number;
-  toTime?: number;
   nonce: string;
 };
 
-/** The answer, handed to one Verifier, out of band. */
+/**
+ * The frozen boundary for one lane.
+ *
+ * `noteCount` is the number of notes the lane held when the Holder approved.
+ * Verification reads exactly indices 0..noteCount-1 and nothing else.
+ */
+export type LaneSnapshot = {
+  noteCount: number;
+  total: string;
+};
+
+export type Snapshot = {
+  outbound?: LaneSnapshot;
+  inbound?: LaneSnapshot;
+};
+
+/** The answer, handed to a Verifier out of band. */
 export type Disclosure = {
   scheme: typeof DISCLOSURE_SCHEME;
   chainId: string;
@@ -60,9 +85,11 @@ export type Disclosure = {
   scope: Scope;
   /** Which lanes are included, in canonical order. */
   directions: Direction[];
-  /** The keys themselves. This is the disclosure. */
+  /** The keys themselves. Reusable, and therefore the secret part. */
   keys: LaneKeys;
-  /** What the Holder asserts, checked against the chain by the Verifier. */
+  /** The frozen boundary and total per lane. */
+  snapshot: Snapshot;
+  /** Sum across every included lane at authorization time. */
   assertedTotal: string;
   createdAt: number;
 };
@@ -86,7 +113,7 @@ function poseidon(values: bigint[]): string {
   return "0x" + ec.starkCurve.poseidonHashMany(values).toString(16);
 }
 
-/** Fixed order so both directions serialise identically everywhere. */
+/** Fixed order so both lanes serialise identically everywhere. */
 const DIRECTION_ORDER: Direction[] = ["outbound", "inbound"];
 const directionCode = (d: Direction) => (d === "outbound" ? 1n : 2n);
 
@@ -104,8 +131,6 @@ export function requestCommitment(r: Request): string {
     textToFelt(r.purpose),
     toFelt(r.counterparty),
     toFelt(r.token),
-    BigInt(r.fromTime ?? 0),
-    BigInt(r.toTime ?? 0),
     textToFelt(r.nonce),
   ]);
 }
@@ -113,11 +138,10 @@ export function requestCommitment(r: Request): string {
 /**
  * The value anchored on chain.
  *
- * It commits to the channel keys, so an authorization cannot be re-pointed at a
- * different relationship. The keys stay secret: this is a hash, and the chain
- * only ever sees the hash. It deliberately does not commit to individual note
- * amounts, because those are read from the chain by the Verifier rather than
- * asserted by the Holder.
+ * It binds the channel keys **and the snapshot boundary**, so an authorization
+ * cannot be re-pointed at a different relationship, and cannot be stretched to
+ * cover payments that arrived later. The keys stay secret: the chain only ever
+ * sees this hash.
  */
 export function disclosureCommitment(d: Disclosure): string {
   const directions = canonicalDirections(d.directions);
@@ -133,6 +157,8 @@ export function disclosureCommitment(d: Disclosure): string {
     BigInt(directions.length),
     ...directions.map(directionCode),
     ...directions.map((dir) => toFelt(d.keys[dir] ?? 0)),
+    ...directions.map((dir) => BigInt(d.snapshot[dir]?.noteCount ?? 0)),
+    ...directions.map((dir) => toFelt(d.snapshot[dir]?.total ?? 0)),
     toFelt(d.assertedTotal),
     BigInt(d.createdAt),
   ]);
@@ -155,6 +181,11 @@ export function normalizeDisclosure(d: Disclosure): Disclosure {
   const keys: LaneKeys = {};
   if (d.keys.outbound) keys.outbound = felt(d.keys.outbound);
   if (d.keys.inbound) keys.inbound = felt(d.keys.inbound);
+  const snapshot: Snapshot = {};
+  for (const dir of canonicalDirections(d.directions)) {
+    const lane = d.snapshot[dir];
+    if (lane) snapshot[dir] = { noteCount: lane.noteCount, total: toFelt(lane.total).toString() };
+  }
   return {
     ...d,
     chainId: felt(d.chainId),
@@ -167,6 +198,7 @@ export function normalizeDisclosure(d: Disclosure): Disclosure {
     },
     directions: canonicalDirections(d.directions),
     keys,
+    snapshot,
     assertedTotal: toFelt(d.assertedTotal).toString(),
   };
 }
@@ -189,12 +221,8 @@ export function answersRequest(d: Disclosure, r: Request): { ok: boolean; reason
   return { ok: true, reason: "This disclosure answers the request it was made for." };
 }
 
-// A link has to survive email clients, chat apps and being pasted by hand, so
-// base64url with no padding rather than raw JSON in a query string.
-//
-// Note that a disclosure link carries channel keys. It is shared deliberately
-// with one Verifier, exactly like handing over a document, and the UI says so.
-// A request link carries nothing sensitive at all.
+// Encoding. A request link carries nothing sensitive. A disclosure carries
+// reusable channel keys, so see transport.ts for how it is actually shared.
 
 export function encodeLink(value: Request | Disclosure): string {
   return Buffer.from(JSON.stringify(value), "utf8").toString("base64url");
@@ -210,6 +238,9 @@ export function decodeDisclosure(encoded: string): Disclosure {
   const parsed = decode<Disclosure>(encoded);
   if (parsed.scheme !== DISCLOSURE_SCHEME) {
     throw unknownScheme(parsed.scheme, DISCLOSURE_SCHEME);
+  }
+  if (!parsed.snapshot || typeof parsed.snapshot !== "object") {
+    throw new Error("This disclosure has no snapshot boundary and cannot be verified.");
   }
   return parsed;
 }
