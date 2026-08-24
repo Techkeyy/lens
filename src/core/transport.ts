@@ -26,6 +26,7 @@ import {
   decodeDisclosure,
   disclosureCommitment,
   encodeLink,
+  toBase64Url,
 } from "./bundle";
 
 export const PROOF_PATH = "/proof";
@@ -129,7 +130,7 @@ export function fromDisclosureFile(body: string): Disclosure {
   } catch {
     throw new ProofLinkError("That file is not a Lens disclosure.");
   }
-  return decodeDisclosure(Buffer.from(JSON.stringify(parsed), "utf8").toString("base64url"));
+  return decodeDisclosure(toBase64Url(JSON.stringify(parsed)));
 }
 
 /**

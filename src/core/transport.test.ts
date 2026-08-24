@@ -17,7 +17,13 @@ import {
   parseProofLink,
   toDisclosureFile,
 } from "./transport";
-import { DISCLOSURE_SCHEME, type Disclosure, disclosureCommitment, encodeLink } from "./bundle";
+import {
+  DISCLOSURE_SCHEME,
+  type Disclosure,
+  disclosureCommitment,
+  encodeLink,
+  fromBase64Url,
+} from "./bundle";
 
 const CHANNEL_KEY_IN = "0x7c0ffee1234567890abcdef1234567890abcdef1234567890abcdef123456789";
 const CHANNEL_KEY_OUT = "0x5deadbeef1234567890abcdef1234567890abcdef1234567890abcdef1234567";
@@ -63,7 +69,7 @@ describe("proof link structure", () => {
       expect(beforeFragment).not.toContain(strip0x(key));
     }
     // And the decoded fragment is where they actually are.
-    const decoded = Buffer.from(link.fragment, "base64url").toString("utf8");
+    const decoded = fromBase64Url(link.fragment);
     expect(decoded).toContain(CHANNEL_KEY_IN);
   });
 
@@ -74,7 +80,7 @@ describe("proof link structure", () => {
   it("never carries the master viewing key anywhere", () => {
     expect(link.url).not.toContain(VIEWING_KEY);
     expect(link.url).not.toContain(strip0x(VIEWING_KEY));
-    expect(Buffer.from(link.fragment, "base64url").toString("utf8")).not.toContain(VIEWING_KEY);
+    expect(fromBase64Url(link.fragment)).not.toContain(VIEWING_KEY);
   });
 
   it("builds a relative link when no origin is given", () => {
