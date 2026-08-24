@@ -38,6 +38,34 @@ npx tsx scripts/registry-rehearsal.ts
 The commitment used is a throwaway hash of a timestamp. No real disclosure and
 no key material was involved.
 
+## Sepolia product end to end, 2026-08-25
+
+`npx tsx scripts/e2e-sepolia.ts` drives the same `createDisclosure` the
+interface calls, then authorizes, reads and revokes on the live contract.
+
+| Item | Value |
+| --- | --- |
+| Commitment | `0x2949d88721fe5a99e2697e82aa47e83019c108136944560866573b6e3eff8db` |
+| Authorize | `0x9f11ef1865ea204386c32815411ac57dce16e203802ba7473fb6ba43af01b1` |
+| Revoke | `0x78b72a22869a06df57eb62100c2050745f585a6de3dd5f24e0b9dd77501b446` |
+| Observed | Unknown to Active to Revoked |
+| History | 3 disclosures rebuilt from chain events |
+
+**Real:** the commitment, the authorization, the status reads, the revocation,
+and the event-based history. That is the whole registry half of the product.
+
+**Fixture:** the STRK20 relationship itself. Creating a genuine shielded payment
+needs the proving service, which is still unpublished, so the payments come from
+the in-memory pool the tests use. It is labelled in the script output and never
+written into `strk20.json`.
+
+**Consequence for the proof page.** Because the relationship is a fixture, the
+live proof page verifies the disclosure against the real Sepolia pool, finds no
+such registered holder, and fails closed with "Verification failed". That is
+correct behaviour, and it means the ACTIVE and REVOKED banners cannot be
+demonstrated in a browser until a real relationship exists. They are covered by
+tests in `src/core/product.test.ts` instead.
+
 ## The declare fee, and why `--tight` exists
 
 starknet.js pads both the gas amount and the gas price by 1.5x when it builds

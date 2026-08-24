@@ -258,3 +258,27 @@ describe("consent warnings", () => {
     expect(serialized).not.toContain(ALICE_VK.toString());
   });
 });
+
+describe("empty lanes are not disclosed", () => {
+  it("leaves out a lane with no payments, so its reusable key is never shared", async () => {
+    const { pool, inbound, session, request } = world();
+    // Only inbound has payments. The outbound lane exists but is empty.
+    pool.pay(inbound, USDC, 100n);
+
+    const { disclosure } = await createDisclosure(pool, session, request, { now: 1 });
+    expect(disclosure.directions).toEqual(["inbound"]);
+    expect(disclosure.keys.outbound).toBeUndefined();
+    expect(disclosure.snapshot.outbound).toBeUndefined();
+    // Sharing an empty lane's key would expose future payments in a direction
+    // where nothing has happened yet.
+    expect(JSON.stringify(disclosure)).not.toContain("outbound");
+  });
+
+  it("still includes both when both have payments", async () => {
+    const { pool, inbound, outbound, session, request } = world();
+    pool.pay(inbound, USDC, 100n);
+    pool.pay(outbound, USDC, 50n);
+    const { disclosure } = await createDisclosure(pool, session, request, { now: 1 });
+    expect(disclosure.directions).toEqual(["outbound", "inbound"]);
+  });
+});

@@ -82,15 +82,16 @@ export async function createDisclosure(
     keys.inbound = "0x" + relationship.inboundKey.toString(16);
   }
 
-  const directions = canonicalDirections(
+  const candidates = canonicalDirections(
     (["outbound", "inbound"] as const).filter((d) => keys[d] !== undefined),
   );
 
   const snapshot: Snapshot = {};
   const lanes: DisclosurePreview["lanes"] = [];
+  const directions: Direction[] = [];
   let assertedTotal = 0n;
 
-  for (const direction of directions) {
+  for (const direction of candidates) {
     const channelKey = keys[direction]!;
 
     // The boundary is fixed here, at approval time, from the live lane.
@@ -109,9 +110,18 @@ export async function createDisclosure(
       );
     }
 
+    // An empty lane is left out entirely. Its key is reusable, so including it
+    // would hand over the ability to read future payments in a direction where
+    // nothing has happened, which discloses more than the holder is proving.
+    if (noteCount === 0) {
+      delete keys[direction];
+      continue;
+    }
+
     const total = totalAmount(notes);
     const lane: LaneSnapshot = { noteCount, total: total.toString() };
     snapshot[direction] = lane;
+    directions.push(direction);
     lanes.push({ direction, noteCount, total });
     assertedTotal += total;
   }
@@ -133,7 +143,7 @@ export async function createDisclosure(
     createdAt: now,
   };
 
-  const empty = lanes.every((l) => l.noteCount === 0);
+  const empty = lanes.length === 0;
   const warnings = empty
     ? [`No payments were found between you and this address in this asset.`]
     : [...exposure(lanes.map(({ direction, noteCount }) => ({ direction, noteCount }))),
