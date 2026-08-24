@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
+import { useEffect, useState } from "react";
 import { WalletAccountV6, validateAndParseAddress, walletV6 } from "starknet";
 import { createStore, type Store } from "@starknet-io/get-starknet-discovery";
 import type { WalletWithStarknetFeatures } from "@starknet-io/get-starknet-wallet-standard/features";
@@ -34,18 +34,19 @@ export default function ConnectWallet({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
 
-  // The wallet list is external state that changes on its own, which is what
-  // useSyncExternalStore exists for. Copying it into React state from an
-  // effect would render twice and can tear.
-  const store = useMemo<Store | undefined>(
-    () => (typeof window === "undefined" ? undefined : createStore({ eip1193Adapters: [] })),
-    [],
-  );
-  const wallets = useSyncExternalStore<readonly WalletWithStarknetFeatures[]>(
-    (onChange) => store?.subscribe(() => onChange()) ?? (() => {}),
-    () => store?.getWallets() ?? EMPTY,
-    () => EMPTY,
-  );
+  const [wallets, setWallets] = useState<readonly WalletWithStarknetFeatures[]>(EMPTY);
+
+  // The discovery store hands back a fresh array on every read, so
+  // useSyncExternalStore cannot be used without caching the snapshot, and an
+  // uncached getSnapshot loops forever. Subscribing and copying into state is
+  // the correct shape for this API.
+  useEffect(() => {
+    const store: Store = createStore({ eip1193Adapters: [] });
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- seeding from an external store on mount
+    setWallets(store.getWallets().slice());
+    const unsub = store.subscribe((next) => setWallets(next.slice()));
+    return () => unsub();
+  }, []);
 
   useEffect(() => {
     if (!open) return;
