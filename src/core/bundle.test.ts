@@ -1,184 +1,228 @@
 /**
- * Digest stability and scope binding.
+ * Commitment determinism, scheme rejection, and the payload invariant.
  *
- * The digest is what the chain anchors, so two clients must agree on it byte
- * for byte, and any change to what the verifier relies on must break it. The
- * cases that matter are the tampering ones: a bundle re-pointed at a different
- * lane, or reused against a different request, has to fail.
+ * The commitment is what the chain stores, so two clients must agree on it
+ * byte for byte and any change to what a Verifier relies on must break it.
+ * The last block here guards the product's central invariant: a Holder's
+ * master viewing key must never appear in anything that leaves their browser.
  */
 
 import { describe, expect, it } from "vitest";
 import {
-  BUNDLE_VERSION,
-  type Bundle,
+  DISCLOSURE_SCHEME,
+  REQUEST_SCHEME,
+  type Disclosure,
   type Request,
   answersRequest,
-  bundleDigest,
-  decodeLink,
+  canonicalDirections,
+  decodeDisclosure,
+  decodeRequest,
+  disclosureCommitment,
   encodeLink,
-  isExpired,
   makeRequest,
-  normalizeBundle,
-  requestDigest,
+  normalizeDisclosure,
+  requestCommitment,
 } from "./bundle";
+import { deriveViewingKeyFromPrivateKey, publicViewingKey } from "./session";
+import { computeChannelKey } from "./derive";
 
 const SEPOLIA = "0x534e5f5345504f4c4941";
-const ACME = "0x0acce55";
-const ADA = "0x0ada";
-const USDC = "0x053c91253bc9682c04929ca02ed00b3e423f6710d2ee7e0d5ebb06f3ecf368a8";
-const MALLORY = "0x0badbad";
-const STRANGER = "0x0e15e";
 const POOL = "0x0254a6b2997ef52e9f830ce1f543f6b29768295e8d17e2267d672c552cfe0d91";
+const ALICE = "0x0a11ce";
+const EMPLOYER = "0x0e11907e2";
+const USDC = "0x053c91253bc9682c04929ca02ed00b3e423f6710d2ee7e0d5ebb06f3ecf368a8";
 
 const request: Request = makeRequest({
   chainId: SEPOLIA,
   pool: POOL,
-  requester: "Acme Exchange",
-  purpose: "Source of funds for your 8,000 USDC withdrawal",
-  scope: { sender: ACME, recipient: ADA, token: USDC },
-  expiresAt: 0,
-  nonce: "fixed-nonce-for-tests",
+  requester: "Northside Lettings",
+  purpose: "Proof of salary income for a tenancy application",
+  counterparty: EMPLOYER,
+  token: USDC,
+  fromTime: 1_719_792_000,
+  toTime: 1_722_384_000,
+  nonce: "fixed-for-tests",
 });
 
-const bundle: Bundle = {
-  v: BUNDLE_VERSION,
+const disclosure: Disclosure = {
+  scheme: DISCLOSURE_SCHEME,
   chainId: SEPOLIA,
   pool: POOL,
-  requestDigest: requestDigest(request),
-  subject: ADA,
-  scope: { sender: ACME, recipient: ADA, token: USDC },
-  channelKey: "0xdef",
-  assertedTotal: "350",
-  assertedAmounts: ["100", "250"],
-  issuedAt: 1_700_000_000,
-  expiresAt: 0,
+  requestCommitment: requestCommitment(request),
+  scope: { holder: ALICE, counterparty: EMPLOYER, token: USDC },
+  directions: ["inbound"],
+  keys: { inbound: "0xdef" },
+  assertedTotal: "9200",
+  createdAt: 1_724_000_000,
 };
 
-describe("digests", () => {
+describe("commitment", () => {
   it("is stable across repeated computation", () => {
-    expect(bundleDigest(bundle)).toBe(bundleDigest(bundle));
-    expect(requestDigest(request)).toBe(requestDigest(request));
+    expect(disclosureCommitment(disclosure)).toBe(disclosureCommitment(disclosure));
+    expect(requestCommitment(request)).toBe(requestCommitment(request));
   });
 
   it("does not depend on JSON key order", () => {
     const reordered = JSON.parse(
       JSON.stringify({
-        expiresAt: bundle.expiresAt,
-        scope: bundle.scope,
-        v: bundle.v,
-        pool: bundle.pool,
-        subject: bundle.subject,
-        chainId: bundle.chainId,
-        channelKey: bundle.channelKey,
-        assertedAmounts: bundle.assertedAmounts,
-        requestDigest: bundle.requestDigest,
-        assertedTotal: bundle.assertedTotal,
-        issuedAt: bundle.issuedAt,
+        createdAt: disclosure.createdAt,
+        keys: disclosure.keys,
+        scheme: disclosure.scheme,
+        scope: disclosure.scope,
+        pool: disclosure.pool,
+        assertedTotal: disclosure.assertedTotal,
+        chainId: disclosure.chainId,
+        directions: disclosure.directions,
+        requestCommitment: disclosure.requestCommitment,
       }),
-    ) as Bundle;
-    expect(bundleDigest(reordered)).toBe(bundleDigest(bundle));
+    ) as Disclosure;
+    expect(disclosureCommitment(reordered)).toBe(disclosureCommitment(disclosure));
   });
 
-  it("agrees regardless of how a client formatted its felts", () => {
-    const padded = normalizeBundle({
-      ...bundle,
-      channelKey: "0x0def",
-      subject: "0x0ada",
+  it("agrees however a client padded its felts", () => {
+    const padded = normalizeDisclosure({
+      ...disclosure,
+      keys: { inbound: "0x0def" },
+      scope: { ...disclosure.scope, holder: "0x00a11ce" },
     });
-    expect(bundleDigest(padded)).toBe(bundleDigest(normalizeBundle(bundle)));
+    expect(disclosureCommitment(padded)).toBe(disclosureCommitment(normalizeDisclosure(disclosure)));
   });
 
-  it("changes when the lane changes, so an anchor cannot vouch for another lane", () => {
-    const elsewhere = { ...bundle, channelKey: "0xbeef" };
-    expect(bundleDigest(elsewhere)).not.toBe(bundleDigest(bundle));
+  it("orders directions canonically, so lane order cannot change the hash", () => {
+    const keys = { inbound: "0x1", outbound: "0x2" };
+    const a: Disclosure = { ...disclosure, directions: ["inbound", "outbound"], keys };
+    const b: Disclosure = { ...disclosure, directions: ["outbound", "inbound"], keys };
+    expect(disclosureCommitment(a)).toBe(disclosureCommitment(b));
+    expect(canonicalDirections(["inbound", "outbound"])).toEqual(["outbound", "inbound"]);
+  });
+
+  it("changes when the disclosed relationship changes", () => {
+    expect(disclosureCommitment({ ...disclosure, keys: { inbound: "0xbeef" } })).not.toBe(
+      disclosureCommitment(disclosure),
+    );
+  });
+
+  it("changes when a second direction is added", () => {
+    const both: Disclosure = {
+      ...disclosure,
+      directions: ["outbound", "inbound"],
+      keys: { inbound: "0xdef", outbound: "0xabc" },
+    };
+    expect(disclosureCommitment(both)).not.toBe(disclosureCommitment(disclosure));
+  });
+
+  it("changes when the holder changes", () => {
+    const impostor = { ...disclosure, scope: { ...disclosure.scope, holder: "0x0badbad" } };
+    expect(disclosureCommitment(impostor)).not.toBe(disclosureCommitment(disclosure));
   });
 
   it("changes when the claimed total changes", () => {
-    expect(bundleDigest({ ...bundle, assertedTotal: "351" })).not.toBe(bundleDigest(bundle));
-  });
-
-  it("changes when the subject changes", () => {
-    expect(bundleDigest({ ...bundle, subject: MALLORY })).not.toBe(bundleDigest(bundle));
-  });
-
-  it("distinguishes an omitted amount list from an empty one", () => {
-    const none = { ...bundle, assertedAmounts: undefined };
-    const empty = { ...bundle, assertedAmounts: [] };
-    expect(bundleDigest(none)).toBe(bundleDigest(empty));
+    expect(disclosureCommitment({ ...disclosure, assertedTotal: "9201" })).not.toBe(
+      disclosureCommitment(disclosure),
+    );
   });
 
   it("separates two otherwise identical requests by nonce", () => {
-    const other = { ...request, nonce: "different" };
-    expect(requestDigest(other)).not.toBe(requestDigest(request));
+    expect(requestCommitment({ ...request, nonce: "other" })).not.toBe(requestCommitment(request));
   });
 
-  it("accepts a purpose longer than a felt", () => {
-    const wordy = {
-      ...request,
-      purpose: "x".repeat(400),
-    };
-    expect(requestDigest(wordy)).toMatch(/^0x[0-9a-f]+$/);
-    expect(requestDigest(wordy)).not.toBe(requestDigest(request));
+  it("commits to the requested period", () => {
+    expect(requestCommitment({ ...request, toTime: 1_722_384_001 })).not.toBe(
+      requestCommitment(request),
+    );
+  });
+
+  it("accepts a purpose longer than one felt", () => {
+    const wordy = { ...request, purpose: "x".repeat(400) };
+    expect(requestCommitment(wordy)).toMatch(/^0x[0-9a-f]+$/);
+    expect(requestCommitment(wordy)).not.toBe(requestCommitment(request));
   });
 });
 
 describe("answersRequest", () => {
-  it("accepts the bundle made for it", () => {
-    expect(answersRequest(bundle, request).ok).toBe(true);
+  it("accepts the disclosure made for it", () => {
+    expect(answersRequest(disclosure, request).ok).toBe(true);
   });
 
-  it("rejects a bundle made for a different request", () => {
-    const other = makeRequest({ ...request, nonce: "another" });
-    const r = answersRequest(bundle, other);
+  it("rejects one made for a different request", () => {
+    const r = answersRequest(disclosure, makeRequest({ ...request, nonce: "another" }));
     expect(r.ok).toBe(false);
     expect(r.reason).toContain("different request");
   });
 
-  it("rejects a bundle that answers about a different counterparty", () => {
-    const swapped: Bundle = { ...bundle, scope: { ...bundle.scope, sender: STRANGER } };
-    const r = answersRequest(swapped, request);
-    expect(r.ok).toBe(false);
-    expect(r.reason).toContain("different lane");
+  it("rejects one about a different counterparty", () => {
+    const swapped: Disclosure = {
+      ...disclosure,
+      scope: { ...disclosure.scope, counterparty: "0x0e15e" },
+    };
+    expect(answersRequest(swapped, request).reason).toContain("different relationship");
   });
 
-  it("rejects a bundle from another network", () => {
-    const mainnetish: Bundle = { ...bundle, chainId: "0x534e5f4d41494e" };
-    // Re-point its requestDigest so the lane check is what fires, not the digest.
-    const r = answersRequest(
-      { ...mainnetish, requestDigest: requestDigest({ ...request, chainId: "0x534e5f4d41494e" }) },
-      { ...request, chainId: "0x534e5f4d41494e" },
-    );
-    expect(r.ok).toBe(true);
-    expect(answersRequest(mainnetish, request).ok).toBe(false);
+  it("rejects one from another network", () => {
+    const elsewhere: Disclosure = { ...disclosure, chainId: "0x534e5f4d41494e" };
+    expect(answersRequest(elsewhere, request).ok).toBe(false);
   });
 });
 
-describe("expiry", () => {
-  it("treats zero as never expiring", () => {
-    expect(isExpired(0, 9_999_999_999)).toBe(false);
-  });
-
-  it("expires strictly after the deadline", () => {
-    expect(isExpired(1000, 1000)).toBe(false);
-    expect(isExpired(1000, 1001)).toBe(true);
-  });
-});
-
-describe("links", () => {
-  it("round trips a bundle through a link", () => {
-    expect(decodeLink<Bundle>(encodeLink(bundle))).toEqual(bundle);
+describe("links and schemes", () => {
+  it("round trips a disclosure", () => {
+    expect(decodeDisclosure(encodeLink(disclosure))).toEqual(disclosure);
   });
 
   it("round trips a request", () => {
-    expect(decodeLink<Request>(encodeLink(request))).toEqual(request);
+    expect(decodeRequest(encodeLink(request))).toEqual(request);
   });
 
-  it("produces a link safe to paste, with no padding or slashes", () => {
-    expect(encodeLink(bundle)).toMatch(/^[A-Za-z0-9_-]+$/);
+  it("is safe to paste, with no padding or slashes", () => {
+    expect(encodeLink(disclosure)).toMatch(/^[A-Za-z0-9_-]+$/);
   });
 
-  it("explains a version mismatch instead of failing obscurely", () => {
-    const stale = Buffer.from(JSON.stringify({ ...bundle, v: 99 }), "utf8").toString("base64url");
-    expect(() => decodeLink(stale)).toThrow(/version 99/);
+  it("refuses an unknown scheme instead of guessing", () => {
+    const alien = encodeLink({ ...disclosure, scheme: "lens-disclosure-v9" } as never);
+    expect(() => decodeDisclosure(alien)).toThrow(/refused rather than guessed/);
+  });
+
+  it("refuses a request link fed to the disclosure decoder", () => {
+    expect(() => decodeDisclosure(encodeLink(request))).toThrow(new RegExp(REQUEST_SCHEME));
+  });
+
+  it("explains a damaged link in plain language", () => {
+    expect(() => decodeRequest("not-valid-base64url!!")).toThrow(/damaged/);
+  });
+});
+
+describe("the master viewing key never leaves", () => {
+  const viewingKey = deriveViewingKeyFromPrivateKey("0xabc123", SEPOLIA, POOL);
+  const employerPub = publicViewingKey(deriveViewingKeyFromPrivateKey("0xdef456", SEPOLIA, POOL));
+  const laneKey = computeChannelKey(ALICE, viewingKey, EMPLOYER, employerPub);
+
+  const real: Disclosure = {
+    ...disclosure,
+    keys: { outbound: "0x" + laneKey.toString(16) },
+    directions: ["outbound"],
+  };
+
+  it("is absent from the disclosure payload", () => {
+    const serialized = JSON.stringify(real);
+    expect(serialized).not.toContain(viewingKey.toString(16));
+    expect(serialized).not.toContain(viewingKey.toString());
+  });
+
+  it("is absent from the shareable link", () => {
+    const decoded = Buffer.from(encodeLink(real), "base64url").toString("utf8");
+    expect(decoded).not.toContain(viewingKey.toString(16));
+  });
+
+  it("cannot be recovered from the channel key it produced", () => {
+    // The channel key is a Poseidon output over the viewing key, so handing it
+    // over does not hand over the key that made it.
+    expect(laneKey).not.toBe(viewingKey);
+    expect(("0x" + laneKey.toString(16)).includes(viewingKey.toString(16))).toBe(false);
+  });
+
+  it("is absent from the on-chain commitment preimage inputs we publish", () => {
+    // Only the commitment reaches the chain, and it is a hash.
+    expect(disclosureCommitment(real)).toMatch(/^0x[0-9a-f]+$/);
+    expect(disclosureCommitment(real)).not.toContain(viewingKey.toString(16));
   });
 });

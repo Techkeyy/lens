@@ -1,6 +1,7 @@
 export * from "./types";
 export * from "./derive";
 export * from "./session";
+export * from "./channels";
 export * from "./read";
 export * from "./claim";
 export * from "./bundle";

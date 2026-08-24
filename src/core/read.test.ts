@@ -43,6 +43,12 @@ function fakePool(
     async subchannelExists() {
       return true;
     },
+    async getNumOfChannels() {
+      return 0;
+    },
+    async getChannelInfo() {
+      return { ephemeralPubkey: 0n, encChannelKey: 0n, encSenderAddr: 0n };
+    },
   };
 }
 

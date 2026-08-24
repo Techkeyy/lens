@@ -7,6 +7,7 @@
  */
 
 import { RpcProvider } from "starknet";
+import type { EncChannelInfo } from "./channels";
 import {
   type Felt,
   computeNoteId,
@@ -37,6 +38,10 @@ export type NoteReader = {
   getPublicKey(userAddr: Felt): Promise<bigint>;
   channelExists(channelMarker: Felt): Promise<boolean>;
   subchannelExists(subchannelMarker: Felt): Promise<boolean>;
+  /** How many inbound lanes this address has. Public, and only a count. */
+  getNumOfChannels(recipient: Felt): Promise<number>;
+  /** The encrypted record a sender published when opening a lane. */
+  getChannelInfo(recipient: Felt, index: number): Promise<EncChannelInfo>;
 };
 
 /** Reads against a live pool. `pool` is the STRK20 privacy pool address. */
@@ -92,6 +97,28 @@ export function poolReader(provider: RpcProvider, pool: string): NoteReader {
         calldata: [toFelt(subchannelMarker).toString()],
       });
       return BigInt(res[0]) !== 0n;
+    },
+
+    async getNumOfChannels(recipient: Felt) {
+      const res = await provider.callContract({
+        contractAddress: pool,
+        entrypoint: "get_num_of_channels",
+        calldata: [toFelt(recipient).toString()],
+      });
+      return Number(BigInt(res[0]));
+    },
+
+    async getChannelInfo(recipient: Felt, index: number) {
+      const res = await provider.callContract({
+        contractAddress: pool,
+        entrypoint: "get_channel_info",
+        calldata: [toFelt(recipient).toString(), String(index)],
+      });
+      return {
+        ephemeralPubkey: BigInt(res[0]),
+        encChannelKey: BigInt(res[1]),
+        encSenderAddr: BigInt(res[2]),
+      };
     },
   };
 }
