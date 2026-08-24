@@ -2,16 +2,19 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import SelectWallet from "./client/WalletHandle/SelectWallet";
 
+/**
+ * Two destinations, so no sidebar and no permanent wallet button. Connection is
+ * requested on the screen that needs it, with a reason attached, rather than at
+ * the door.
+ */
 const LINKS = [
-  { href: "/vault", label: "Vault" },
-  { href: "/protocol", label: "Protocol" },
+  { href: "/request", label: "Request a disclosure" },
+  { href: "/disclosures", label: "My disclosures" },
 ];
 
 export default function Shell({ children }: { children: React.ReactNode }) {
   const path = usePathname();
-  const home = path === "/";
   return (
     <div className="shell">
       <a className="skip-link" href="#main">
@@ -23,24 +26,21 @@ export default function Shell({ children }: { children: React.ReactNode }) {
         </Link>
         <div className="nav-links">
           {LINKS.map((l) => (
-            <Link key={l.href} href={l.href} className={path.startsWith(l.href) ? "active" : ""}>
+            <Link
+              key={l.href}
+              href={l.href}
+              className={path.startsWith(l.href) ? "active" : ""}
+              aria-current={path.startsWith(l.href) ? "page" : undefined}
+            >
               {l.label}
             </Link>
           ))}
         </div>
-        <div className="nav-right">
-          {home ? (
-            <Link href="/vault" className="btn btn-primary">
-              Score this next action
-            </Link>
-          ) : (
-            <SelectWallet variant="nav" />
-          )}
-        </div>
+        <div className="nav-right" />
       </nav>
       <main id="main">{children}</main>
       <footer className="footer">
-        <span>Lens. Privacy briefing for STRK20.</span>
+        <span>Lens. Selective disclosure for STRK20 private payments.</span>
         <span>
           <a href="https://github.com/Techkeyy/lens" target="_blank" rel="noreferrer">
             Source
