@@ -22,6 +22,7 @@ const CASM = "cairo/target/dev/lens_registry_LensRegistry.compiled_contract_clas
 const ENV_FILE = ".env.local";
 
 const mainnet = process.argv.includes("--mainnet");
+const tight = process.argv.includes("--tight");
 const network = mainnet ? "mainnet" : "sepolia";
 const KEY_NAME = mainnet ? "MAINNET_PRIVATE_KEY" : "SEPOLIA_PRIVATE_KEY";
 const ADDR_NAME = mainnet ? "MAINNET_ADDRESS" : "SEPOLIA_ADDRESS";
@@ -97,7 +98,39 @@ async function main() {
   }
 
   if (!declared) {
-    const res = await account.declare({ contract: sierra, casm });
+    // starknet.js pads both the gas amount and the price by 1.5x, so the
+    // declared worst case is 2.25x the real cost and the account is rejected
+    // for "resource bounds exceed balance" even when it can comfortably afford
+    // the transaction. --tight rebuilds the bounds from the raw estimate with a
+    // stated margin instead. Gas amount for a declare is deterministic, so the
+    // margin is really about the price moving between estimate and inclusion.
+    let options = {};
+    if (tight) {
+      const fee = await account.estimateDeclareFee({ contract: sierra, casm });
+      const bounds = fee.resourceBounds as Record<
+        string,
+        { max_amount: bigint | string; max_price_per_unit: bigint | string }
+      >;
+      const scale = (v: bigint | string, num: bigint, den: bigint) =>
+        (BigInt(v) * num) / den;
+      const resourceBounds = Object.fromEntries(
+        Object.entries(bounds).map(([resource, b]) => [
+          resource,
+          {
+            // Undo the 1.5x, then add 6% on amount and 8% on price.
+            max_amount: scale(b.max_amount, 106n, 150n),
+            max_price_per_unit: scale(b.max_price_per_unit, 108n, 150n),
+          },
+        ]),
+      );
+      const worst = Object.values(resourceBounds).reduce(
+        (sum, b) => sum + b.max_amount * b.max_price_per_unit,
+        0n,
+      );
+      console.log(`declare    tight bounds, worst case ${Number(worst) / 1e18} STRK`);
+      options = { resourceBounds };
+    }
+    const res = await account.declare({ contract: sierra, casm }, options);
     console.log(`declare tx ${res.transaction_hash}`);
     await provider.waitForTransaction(res.transaction_hash);
     console.log(`declared   ${res.class_hash}`);
