@@ -224,8 +224,30 @@ export function answersRequest(d: Disclosure, r: Request): { ok: boolean; reason
 // Encoding. A request link carries nothing sensitive. A disclosure carries
 // reusable channel keys, so see transport.ts for how it is actually shared.
 
+/**
+ * base64url without Node's Buffer.
+ *
+ * The browser polyfill for Buffer does not implement the "base64url" encoding,
+ * so `Buffer.from(x, "base64url")` throws at runtime in a page while passing
+ * every test under Node. btoa and atob exist in both, so the encoding is done
+ * by hand and works identically on each side.
+ */
+export function toBase64Url(text: string): string {
+  const bytes = new TextEncoder().encode(text);
+  let binary = "";
+  for (const b of bytes) binary += String.fromCharCode(b);
+  return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+
+export function fromBase64Url(encoded: string): string {
+  const padded = encoded.replace(/-/g, "+").replace(/_/g, "/");
+  const binary = atob(padded + "=".repeat((4 - (padded.length % 4)) % 4));
+  const bytes = Uint8Array.from(binary, (c) => c.charCodeAt(0));
+  return new TextDecoder().decode(bytes);
+}
+
 export function encodeLink(value: Request | Disclosure): string {
-  return Buffer.from(JSON.stringify(value), "utf8").toString("base64url");
+  return toBase64Url(JSON.stringify(value));
 }
 
 export function decodeRequest(encoded: string): Request {
@@ -248,7 +270,7 @@ export function decodeDisclosure(encoded: string): Disclosure {
 function decode<T>(encoded: string): T {
   let json: string;
   try {
-    json = Buffer.from(encoded, "base64url").toString("utf8");
+    json = fromBase64Url(encoded);
   } catch {
     throw new Error("This link is damaged and could not be read.");
   }
