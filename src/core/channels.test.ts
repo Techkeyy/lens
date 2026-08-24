@@ -8,7 +8,6 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { ec } from "starknet";
 import { decryptChannelInfo, encryptChannelInfo, findInboundChannel, type EncChannelInfo } from "./channels";
 import { publicViewingKey } from "./session";
 
