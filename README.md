@@ -140,16 +140,47 @@ addressed to them. Lens inspects both, so "payments between you and this
 address" is accurate rather than aspirational. A relationship where money only
 ever moved one way is normal and handled.
 
-## Disclosure commitment
+## Disclosure snapshot and commitment
 
-Canonical, versioned, deterministic: `lens-disclosure-v1`.
+Canonical, versioned, deterministic: `lens-disclosure-v2`.
+
+A disclosure is a **frozen snapshot**, not a live window. It records how many
+notes each lane held when the Holder approved, and what they totalled. Notes
+live in WriteOnce cells at dense sequential indices, so indices 0..count-1 name
+the same notes forever. Verification reads exactly that range.
+
+Two consequences, both intended:
+
+- A payment arriving later is **not** part of the authorized disclosure.
+- A payment arriving later does **not** break it either. Under v1 it did, because
+  the recomputed total no longer matched.
+
+Later activity is reported as `laterActivityDetected` so an interface can show
+it as later activity rather than as approved history. A Verifier holding the
+reusable key can read it independently; we surface that rather than hide it.
 
 The commitment covers scheme, chain, pool, request commitment, holder,
 counterparty, asset, directions in canonical order, the channel keys, the
-asserted total and the creation time. Field order is fixed and felts are
-normalised, so two clients that formatted differently still agree.
+snapshot count and total per lane, the aggregate total and the creation time.
+Field order is fixed and felts are normalised, so two clients that formatted
+differently still agree. An unknown scheme is **refused**, not guessed at.
 
-An unknown scheme is **refused**, not guessed at.
+## Sharing a disclosure
+
+```
+https://host/proof/<commitment>#<disclosure>
+                   ^^^^^^^^^^^^ public, safe in a request
+                                ^^^^^^^^^^^^ never leaves the browser
+```
+
+The path carries only the commitment, which is already on chain. The channel
+keys live in the fragment, which browsers do not transmit, so they never reach a
+server, a log or an analytics call. A file export is available for anyone who
+would rather keep the secret out of a URL entirely.
+
+**A disclosure is a bearer credential.** Anyone who obtains the link or file can
+read it. There is no recipient authentication, and a fragment persists in
+browser history. "Shared with one person" is intent, not a guarantee.
 
 ## On-chain registry
 
@@ -214,6 +245,11 @@ built.
 
 **Cannot prove absence.** A disclosure proves payments happened, never that
 others did not.
+
+**No date filtering.** A note's creation block is independently discoverable,
+since `EncNoteCreated` carries the note id as an indexed event key. But the
+boundary is a note count, not a time range, so any period named in a request is
+context from the requester rather than something the maths enforces.
 
 **Not zero knowledge.** Payments inside the disclosed relationship are revealed
 in full. The gain is scope, not secrecy.
