@@ -3,6 +3,7 @@ export * from "./derive";
 export * from "./session";
 export * from "./read";
 export * from "./claim";
+export * from "./bundle";
 export * from "./detect";
 export * from "./decide";
 export * from "./rewrite";
