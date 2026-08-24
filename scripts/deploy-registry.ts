@@ -40,7 +40,7 @@ function envValue(name: string): string | undefined {
   return line?.slice(name.length + 1).trim() || undefined;
 }
 
-function recordDeployment(classHash: string, address: string) {
+function recordDeployment(classHash: string, address: string, block: number) {
   const path = "cairo/address.md";
   const previous = existsSync(path) ? readFileSync(path, "utf8") : "# Lens disclosure registry\n";
   const stamp = new Date().toISOString().slice(0, 10);
@@ -51,6 +51,14 @@ function recordDeployment(classHash: string, address: string) {
     `- deployed: ${stamp}`,
     `- class hash: \`${classHash}\``,
     `- address: \`${address}\``,
+    `- deployment block: \`${block}\``,
+    ``,
+    `Set these before building the app for this network:`,
+    ``,
+    "```",
+    `NEXT_PUBLIC_REGISTRY_${network.toUpperCase()}=${address}`,
+    `NEXT_PUBLIC_REGISTRY_FROM_BLOCK_${network.toUpperCase()}=${block}`,
+    "```",
     ``,
   ].join("\n");
   writeFileSync(path, previous.replace(new RegExp(`\\n## ${network}[\\s\\S]*?(?=\\n## |$)`), "") + entry);
@@ -142,10 +150,17 @@ async function main() {
     constructorCalldata: CallData.compile([]),
   });
   console.log(`deploy tx  ${deployed.transaction_hash}`);
-  await provider.waitForTransaction(deployed.transaction_hash);
+  const receipt = await provider.waitForTransaction(deployed.transaction_hash);
+  // The deployment block becomes the floor for event scans, so history reads
+  // never start from block zero on a chain with millions of blocks.
+  const block = Number(
+    (receipt as unknown as { block_number?: number }).block_number ??
+      (await provider.getBlockNumber()),
+  );
   console.log(`address    ${deployed.contract_address}`);
+  console.log(`block      ${block}`);
 
-  recordDeployment(classHash, deployed.contract_address);
+  recordDeployment(classHash, deployed.contract_address, block);
 }
 
 main().catch((e) => {
