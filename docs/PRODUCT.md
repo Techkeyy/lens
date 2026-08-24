@@ -32,13 +32,19 @@ opens the whole house.
 | Who has to trust whom | they trust your screenshot | neither, they check the chain |
 | Take it back | no | one transaction |
 
-## The actors
+## The three roles
+
+The Counterparty and the Verifier are usually different people. Alice's employer
+pays her privately; her landlord asks her to prove that income. Alice is the
+Holder, the employer is the Counterparty, the landlord is the Verifier, and the
+employer is never contacted.
 
 | Actor | Wants | Talks to Lens directly |
 | --- | --- | --- |
-| **Discloser** (Ada) | to prove one payment without over-sharing | yes, primary user |
-| **Verifier** (exchange, accountant, client) | proof they can check themselves | yes, no wallet needed |
+| **Holder** (Ada) | to prove one payment without over-sharing | yes, primary user |
+| **Verifier** (landlord, exchange, accountant) | proof they can check themselves | yes, no wallet needed |
 | Starknet wallet | signs once, so keys can be derived | via the browser |
+| **Counterparty** (the employer) | nothing. Not a participant | no, never contacted |
 | STRK20 pool | holds the notes, answers public reads | read-only |
 | Disclosure registry | timestamps and revokes | one write per disclosure |
 
@@ -48,12 +54,12 @@ opens the whole house.
 | --- | --- | --- |
 | 1 | Verifier describes what they need, no wallet | Builds a scoped request, returns a link |
 | 2 | Sends the link however they already talk | Nothing. The link is the message |
-| 3 | Discloser opens it, connects a wallet | Asks for one signature, derives the viewing key in memory |
+| 3 | Holder opens it, connects a wallet | Asks for one signature, derives the viewing key in memory |
 | 4 | Reads what this will expose | Derives the channel key, scans the lane, computes the exposure |
 | 5 | Approves | Builds the bundle, anchors its digest on mainnet |
 | 6 | Sends the bundle back | Nothing. Out of band by design |
 | 7 | Verifier opens it | Binds the key to the pair, reads the notes, checks the anchor |
-| 8 | Discloser revokes later | One transaction. Every copy stops verifying |
+| 8 | Holder revokes later | One transaction. Status becomes REVOKED for anyone checking |
 
 Two things are deliberate. The verifier never connects a wallet, and the bundle
 never touches a server we run.
@@ -122,10 +128,10 @@ verdict that depended on a model's mood would be worth nothing.
 page computing the check is honest. That last one is why the verifier is open
 source and why a command line verifier ships alongside it.
 
-**The verifier does not have to trust:** us, the discloser, or any server. Every
+**The verifier does not have to trust:** us, the Holder, or any server. Every
 input to the verdict is a public read.
 
-**Who can cheat, and how:** the discloser chooses *which* lane to reveal. So a
+**Who can cheat, and how:** the Holder chooses *which* lane to reveal. So a
 disclosure proves that a payment happened. **It can never prove that another
 payment did not.** Someone can truthfully prove Acme paid them 8,000 while
 saying nothing about a second client who paid more.
@@ -139,7 +145,7 @@ individual claim is true.
 so proofs stay checkable with the CLI or by hand. The product is a convenience
 over a public record, not a custodian of one.
 
-**Revocation stops future checking. It cannot un-see.** If they screenshotted it,
+**Revocation withdraws authorization. It cannot un-see.** If they screenshotted it,
 that is gone, and the button says so.
 
 ## The load-bearing assumption

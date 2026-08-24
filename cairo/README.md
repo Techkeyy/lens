@@ -7,23 +7,24 @@ only its digest, which buys three things the bundle cannot give itself:
 2. **An issuer**, so nobody can anchor a bundle that names someone else.
 3. **Revocation**, so a proof can be taken back.
 
-The third is the part no privacy chain has today. A Monero proof string or a
-Zcash payment disclosure is permanent and forwardable: prove your rent once and
-the recipient can pass it around forever. Here the issuer can switch it off and
-every verifier sees that immediately.
+Revocation moves the authorization to REVOKED, and anyone checking the
+disclosure afterwards sees that the Holder withdrew it, and when.
 
-Revocation stops future verification. It cannot un-see what someone already
-read, and the UI says so.
+Revocation does not erase what a Verifier already saw, copied or screenshotted,
+and it does not stop retained channel material from decrypting. It governs
+authorization status, not the reach of information already released. Never
+describe it as making a disclosure "stop working" or making copies "expire":
+those words would be false.
 
 ## Interface
 
 | Function | Who | What |
 | --- | --- | --- |
-| `anchor(digest, expires_at)` | anyone | Records a digest. Caller becomes issuer. Rejected if the digest is already anchored, so an anchor is immutable. `expires_at = 0` means no expiry. |
-| `revoke(digest)` | issuer only | Withdraws the disclosure. Once only. |
-| `status(digest)` | anyone | `Unknown`, `Valid`, `Revoked` or `Expired`. |
-| `is_valid(digest)` | anyone | The same answer as a bool. |
-| `get_anchor(digest)` | anyone | Issuer and the three timestamps. |
+| `authorize(commitment, expires_at)` | anyone | Records a commitment. Caller becomes its Holder. Rejected if already authorized, so a record is immutable. `expires_at = 0` means it does not lapse. |
+| `revoke(commitment)` | Holder only | Withdraws authorization. Once only. |
+| `status(commitment)` | anyone | `Unknown`, `Active`, `Revoked` or `Expired`. |
+| `is_authorized(commitment)` | anyone | The same answer as a bool. |
+| `get_authorization(commitment)` | anyone | Holder and the three timestamps. |
 
 Every read is public, in keeping with the rule that a verifier needs no wallet.
 

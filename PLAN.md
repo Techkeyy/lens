@@ -41,7 +41,7 @@ implying finer granularity than we have.
 
 # Part 1, user workflow
 
-Two roles. **Discloser** holds shielded activity. **Verifier** needs proof of one
+Two roles. **Holder** holds shielded activity. **Verifier** needs proof of one
 fact: an exchange, an accountant, a landlord, a counterparty, a DAO.
 
 Rule that governs every screen: **the verifier never needs a wallet, an account,
@@ -51,7 +51,7 @@ that, we lose the adoption argument.
 ## Flow A, verifier asks first
 
 This is the differentiator. Monero proofs, Zcash ZIP 311, and both sprint
-competitors are one-way strings the discloser generates and hopes is what was
+competitors are one-way strings the Holder generates and hopes is what was
 wanted. Nobody has the request half.
 
 1. **Compose.** Verifier opens `/request`, no wallet. Picks a claim and a scope:
@@ -60,7 +60,7 @@ wanted. Nobody has the request half.
 2. **Send.** Lens returns a request link. The verifier sends it however they
    already talk to the person. The request bounds what can be answered, so nobody
    can be talked into oversharing.
-3. **Open.** Discloser opens the link, connects Ready. Lens derives the channel
+3. **Open.** Holder opens the link, connects Ready. Lens derives the channel
    keys for exactly the named scope, **locally in the browser**. No key reaches a
    server, because there is no server in this path.
 4. **Pre-check.** Before anything is shared, Lens shows what this disclosure
@@ -68,7 +68,7 @@ wanted. Nobody has the request half.
    `0xABC`: 6 notes, including 2 outside the dates you were asked about. It does
    not reveal your balance, your other counterparties, or your viewing key."
    This screen is the old `detect` and `decide` code doing real work.
-5. **Approve and anchor.** Discloser confirms. Lens builds the bundle (scope,
+5. **Approve and anchor.** Holder confirms. Lens builds the bundle (scope,
    claim values, in-scope channel keys, request id, expiry) and signs **one
    mainnet transaction** to the Disclosure Registry, anchoring `hash(bundle)`,
    the requester, and the expiry. The bundle never goes on chain, only its hash.
@@ -77,11 +77,12 @@ wanted. Nobody has the request half.
    `get_note`, unmasks amounts, checks `nullifier_exists`, then checks the
    registry anchor, the requester, the expiry, and the revocation flag. Green
    panel with the exact claim, or a specific reason it failed.
-8. **Revoke.** Any time later the discloser hits Revoke, one mainnet transaction.
-   Every copy of that bundle stops verifying and the page reads "revoked by owner
-   on <date>". No existing privacy chain can take a proof back.
+8. **Revoke.** Any time later the Holder hits Revoke, one mainnet transaction.
+   The proof page then shows REVOKED and when. It does not erase what the
+   Verifier already saw, and a retained channel key keeps working. This is
+   authorization revocation, not access revocation.
 
-## Flow B, discloser sends unprompted
+## Flow B, Holder sends unprompted
 
 Same pipeline without steps 1 and 2. For "here is your receipt". Produces a
 shareable proof link. This is the flow other sprint projects can embed.
@@ -103,7 +104,7 @@ builders integrate, not another standalone app.
 
 **Balance floor is cut from v1.** A note's nullifier binds to the owner's
 private viewing key, so a verifier cannot recompute one. A supplied nullifier
-is therefore an unverifiable assertion: a discloser could hand over any felt
+is therefore an unverifiable assertion: a Holder could hand over any felt
 that happens to be absent from the pool and call the note unspent. Proving
 "I still hold this" needs a circuit, or the master key we exist to avoid
 handing over. `spentStatus` stays in the code as the owner's own view and is
@@ -131,8 +132,9 @@ best thing about the old project:
 - A disclosure is scoped, not zero-knowledge. Everything inside the scope is
   revealed in full. We do not call it a ZK proof.
 - Channel granularity, not note granularity. Stated on the pre-check screen.
-- Revocation stops future verification. It cannot un-see what someone already
-  read. Say so on the revoke button.
+- Revocation withdraws authorization and makes that withdrawal publicly
+  checkable. It cannot un-see what someone already read, and a retained channel
+  key keeps working. Say so on the revoke button.
 - Deposits and withdrawals stay public. Lens does not make them private.
 
 ---
@@ -283,7 +285,7 @@ registry   timestamp and revoke         chain  built, undeployed
 **Journey**, which decides what "working" means from outside the code:
 
 ```
-verifier asks -> discloser opens -> signs once -> sees the exposure
+verifier asks -> Holder opens -> signs once -> sees the exposure
               -> approves -> anchors -> verifier checks -> can revoke
 ```
 
@@ -397,7 +399,7 @@ The Day 2 gate is green. Risks 1 and 2 below are closed.
   `encAmount = (h(ENC_AMOUNT_TAG, channel_key, token, index, 0, salt) + amount) mod 2^128`.
   Source: `sdk/src/utils/encryptions.ts` in starkware-libs/starknet-privacy.
   **The salt travels inside the packed value**, so a channel key alone decrypts
-  the lane. A verifier needs nothing further from the discloser. This is the
+  the lane. A verifier needs nothing further from the Holder. This is the
   disclosure primitive, and it is smaller than expected.
 - **Confirmed against live chain data.** The real note read on 2026-08-18 splits
   into exactly a 120 bit salt and a 128 bit field, matching the layout.
