@@ -260,6 +260,132 @@ starting Day 6, not on Day 12.
 - **Docs and open source, 15%.** Already the old project's strongest axis. Keep
   Apache 2.0, keep the honest accounting, keep the tests.
 
+## Revised build plan, 2026-08-19
+
+Supersedes the schedule below. Three things changed it: `docs/PRODUCT.md` found a
+second load-bearing assumption, the build process now treats the user journey as
+a build requirement rather than polish, and the goal is a product that still
+works after 31 August rather than a demo that survives until it.
+
+### The two maps
+
+**Pipeline**, one job per file:
+
+```
+derive.ts  keys and locations           pure   DONE
+read.ts    public pool reads            I/O    DONE
+claim.ts   verified or not, and why     pure   DONE
+expose.ts  what this reveals            pure   next
+bundle.ts  build, serialise, digest     pure   next
+registry   timestamp and revoke         chain  built, undeployed
+```
+
+**Journey**, which decides what "working" means from outside the code:
+
+```
+verifier asks -> discloser opens -> signs once -> sees the exposure
+              -> approves -> anchors -> verifier checks -> can revoke
+```
+
+Six answers, one line each:
+
+- **Primary user:** the person who was paid and now has to prove it.
+- **Job they came to do:** answer "where did this come from" without over-sharing.
+- **Primary action:** approve a scoped disclosure.
+- **Minimum we must ask for:** one wallet signature. Nothing else.
+- **What we infer instead of asking:** the counterparty's public key, the notes,
+  the amounts, the exposure, the whole claim.
+- **Where value first appears:** the exposure preview, before anything is shared.
+
+### The new load-bearing assumption, verified first
+
+> A viewing key can be derived deterministically from one wallet signature.
+
+The Wallet API exposes three methods and none of them yield a viewing key, and
+the docs forbid asking a user for theirs. Without derivation there is no dapp.
+StarkWare's Privacy Bridge does exactly this and persists nothing but the
+read-only key. **Reproduce it and check a round trip before building on it.**
+
+### Four states, every flow
+
+Not just the happy path. Each of derive, preview, anchor, verify, revoke needs:
+
+- **Loading**: say what is happening. Proving and RPC reads are slow enough to
+  look broken.
+- **Success**: what changed, and the next useful action.
+- **Empty**: "this lane has no payments" is a real answer, not a bug.
+- **Error**: what failed, what is still safe, whether retrying helps. No RPC
+  error codes in front of a user.
+
+The verify page's failure states carry unusual weight, because a verifier seeing
+a confusing error will assume fraud rather than a network blip. Every failure
+reason in `claim.ts` already returns a plain sentence for this reason.
+
+### Chain interactions
+
+One signature at sign-in, one transaction to anchor, one to revoke. Nothing else.
+Explain each in product language before requesting it, treat rejection as a
+normal outcome, and keep explorer links secondary. The verifier signs nothing and
+connects nothing, ever: that is a product rule, not an implementation detail.
+
+### The ninety-second test, asked repeatedly
+
+Can someone who did not build this reach the value without me in the room? The
+honest answer today is no, which is why the **contrast panel is built early, not
+last**: the old way spills a whole history, the Lens way shows one line. If that
+does not land in ten seconds when a stranger looks at it, the weakness is in the
+concept and we need to know while there is time.
+
+### Revised schedule, 19 to 31 August
+
+| Day | Work | Done when |
+| --- | --- | --- |
+| 1 | Reproduce signature-derived viewing key, round trip on sepolia | **gate: our key opens a note we made** |
+| 2 | Mainnet: fund, declare, deploy registry, first anchor | 3 mainnet tx, `strk20.json` populated |
+| 3 | `bundle.ts` and the verify page, no wallet | a stranger verifies in a browser |
+| 4 | Request flow and the exposure preview | full loop, sepolia |
+| 5 | Contrast panel, then show it to someone cold | they explain it back correctly |
+| 6 | **Halfway checkpoint.** Core loop end to end on mainnet | if not, cut scope now |
+| 7 | Revocation end to end, four states everywhere | a revoked bundle fails clearly |
+| 8 | Errors, empty states, human messages | no raw RPC text reaches a user |
+| 9 | CLI verifier, so proofs outlive the site | verify from a terminal |
+| 10 | Reproducibility, fixtures, doctor, one-command bring-up | clean clone runs |
+| 11 | README, docs, demo video | submittable |
+| 12 | Buffer | freeze 18:00 UTC, 31 Aug |
+
+### Spending order when time runs short
+
+1. The risky assumption. 2. The core loop end to end. 3. The primary journey.
+4. Reproducibility. 5. Every integration verified live. 6. Errors and the four
+states. 7. Visual polish.
+
+Polish is last. An unusable flow with good typography is wasted work.
+
+### What "done" means here
+
+Works technically, survives failure, is understandable, gives feedback, is
+reproducible, can be demonstrated. All six, at once. A passing test is a
+component of done, not done.
+
+**Never fake success.** Fixtures and offline paths are legitimate and get labelled
+as what they are. A verified badge for something that was not verified is
+indistinguishable from fraud from where a judge sits, and it would destroy the
+one thing this product sells.
+
+### Real-world, not just sprint-shaped
+
+The instruction is a product that functions after the sprint. Concretely that
+means four things get built even though no criterion demands them:
+
+- **No server in the trust path.** Keys derived in memory, bundles passed between
+  two people, verification from public reads. If we vanish, proofs still check.
+- **A CLI verifier**, so a proof does not depend on our site being up.
+- **A documented bundle format**, so another wallet can adopt it. That is the
+  only realistic distribution route, since we cannot read keys other wallets hold.
+- **The completeness warning on the verifier's own screen.** A disclosure proves
+  a payment happened and can never prove another did not. A verifier who thinks
+  otherwise has been misled by our interface even when every claim is true.
+
 ## Progress
 
 ### Day 1, 2026-08-18: gate passed, one day early
