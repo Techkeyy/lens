@@ -9,7 +9,9 @@
     "start": "next start",
     "lint": "eslint .",
     "test": "vitest run",
-    "doctor": "npx tsx scripts/doctor.ts"
+    "doctor": "npx tsx scripts/doctor.ts",
+    "recovery:eth": "npx tsx scripts/send-recovery-eth.ts",
+    "recovery:verify": "npx tsx scripts/verify-recovery-eth.ts"
   },
   "dependencies": {
     "@starknet-io/get-starknet-discovery": "^6.0.3",
