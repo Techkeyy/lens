@@ -178,3 +178,5 @@ pub mod LensRegistry {
         }
     }
 }
+
+mod tests;
