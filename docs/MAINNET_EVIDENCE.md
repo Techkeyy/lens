@@ -65,6 +65,35 @@ The address and the deployment block are checked into
 [src/utils/networks.ts](../src/utils/networks.ts). The block matters: without it
 `listHolderAuthorizations` would scan mainnet from genesis.
 
+## Production is on mainnet
+
+`https://lens-beige-five.vercel.app` rebuilt from the deployment commit and now
+ships the mainnet registry. Checked, not assumed:
+
+| Check | Result |
+| --- | --- |
+| Registry address in the served client bundle | found in `/_next/static/chunks/326-2008cf66c70ea382.js` |
+| Chain read from the production origin | `0x534e5f4d41494e`, SN_MAIN |
+| `status(unknown commitment)` from that origin | `0x0`, Unknown |
+| `is_authorized(unknown commitment)` from that origin | `0x0`, false |
+| Console errors on the proof page | none |
+
+Two proof pages were loaded against the live site:
+
+- A link with the fragment stripped renders **CANNOT VERIFY** and explains that
+  the part after `#` was lost, rather than guessing.
+- A well-formed disclosure naming the mainnet chain and pool renders
+  **VERIFICATION FAILED**, with the reason: the holder has never registered
+  with the pool, so nobody could have paid them privately. The page reads the
+  real mainnet pool to reach that answer, and shows nothing about the amounts.
+
+That second disclosure was built from the test fixture purely as a verification
+input. It was **not** authorized, and no authorization exists on mainnet.
+
+`/proof` responses carry `Referrer-Policy: no-referrer` and
+`Cache-Control: private, no-store`, so the fragment is not leaked onward or
+cached.
+
 ---
 
 
