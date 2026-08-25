@@ -3,74 +3,68 @@
 import { useEffect, useState } from "react";
 import { walletV6 } from "starknet";
 import { createStore, type Store } from "@starknet-io/get-starknet-discovery";
-import type { WalletWithStarknetFeatures } from "@starknet-io/get-starknet-wallet-standard/features";
+import {
+  StarknetWalletApi,
+  type WalletWithStarknetFeatures,
+} from "@starknet-io/get-starknet-wallet-standard/features";
+import { classify, message, type Verdict } from "./classify";
 
 /**
- * Read-only STRK20 capability probe.
+ * Read-only STRK20 capability probe. Development only.
  *
- * The first version of this scanned `window` for `starknet_*` keys. That found
- * nothing even with Ready installed and unlocked, because wallets are
- * discovered through the wallet-standard registry now, not by dropping an
- * enumerable global on `window`. This uses the same `createStore` discovery the
- * real ConnectWallet uses, so it exercises the path the product will use.
+ * Two bugs got us here, both mine, and both worth remembering.
  *
- * What this page will do: ask the wallet to connect, read its identity, and
+ * The first version scanned `window` for `starknet_*` globals and found
+ * nothing while Ready was installed and unlocked. Wallets announce through the
+ * wallet-standard registry now, so that scan could never have worked.
+ *
+ * The second version discovered the wallet correctly and then called
+ * `wallet.request(...)`, which does not exist. A wallet-standard `Wallet` has
+ * no request method of its own: the request function lives on a named feature.
+ * `@starknet-io/get-starknet-wallet-standard` declares it as
+ *
+ *     features["starknet:walletApi"].request
+ *
+ * and starknet.js reaches it exactly that way internally. This version does the
+ * same, so it uses the surface the wallet actually publishes.
+ *
+ * What this page will do: connect, read identity and announced features, and
  * call the read-only `wallet_strk20Balances`.
  *
- * What it will never do: sign anything, submit anything, approve a token,
- * shield, unshield, transfer, or switch network.
+ * What it will never do: sign, submit, approve a token, shield, unshield,
+ * transfer, or switch network.
  */
 
-// Mainnet STRK and USDC. Used only as the token list for the read-only
-// balances call, which needs a list and returns nothing if the wallet says no.
+// Mainnet STRK and USDC. An empty list would return every shielded token, which
+// is more than a capability probe needs to see.
 const TOKENS = [
   "0x04718f5a0fc34cc1af16a1cdee98ffb20c31f5cd61d6ab07201858f4287c938d",
   "0x053c91253bc9682c04929ca02ed00b3e423f6710d2ee7e0d5ebb06f3ecf368a8",
 ];
 
-type Verdict = "SUPPORTED" | "UNSUPPORTED" | "UNKNOWN" | "ERROR" | "SUPPORTED BY API";
-
 const CHAINS: Record<string, string> = {
-  "0x534e5f4d41494e": "Starknet mainnet",
-  "0x534e5f5345504f4c4941": "Starknet Sepolia",
+  "0x534e5f4d41494e": "Starknet mainnet (SN_MAIN)",
+  "0x534e5f5345504f4c4941": "Starknet Sepolia (SN_SEPOLIA)",
 };
 
-function message(e: unknown): string {
-  const m = (e as { message?: string })?.message ?? String(e);
-  return m.replace(/\s+/g, " ").trim().slice(0, 220);
-}
+type Row = { label: string; verdict: Verdict; detail?: string; sub?: string };
 
-/**
- * A wallet that does not implement a method and a wallet that rejects bad
- * parameters fail in different ways, and that difference is the whole test.
- * "Not implemented" and friends mean the method is absent; anything about the
- * arguments means the method is there and validated them.
- */
-function classify(error: unknown): { verdict: Verdict; detail: string } {
-  const m = message(error);
-  if (/not (implemented|supported|available)|unknown method|unsupported method|no such method|method not found|invalid method/i.test(m)) {
-    return { verdict: "UNSUPPORTED", detail: m };
-  }
-  if (/param|argument|invalid|schema|required|minitems|empty|length/i.test(m)) {
-    return { verdict: "SUPPORTED", detail: `${m}  (an input complaint, so the method exists)` };
-  }
-  if (/reject|denied|abort|cancel/i.test(m)) {
-    return { verdict: "UNKNOWN", detail: `${m}  (dismissed, so nothing was learned)` };
-  }
-  return { verdict: "UNKNOWN", detail: m };
-}
-
-type Row = { label: string; verdict: Verdict; detail?: string };
+type Identity = {
+  name: string;
+  walletId: string;
+  walletVersion: string;
+  featureVersion: string;
+  specs: string;
+  address: string;
+  chainId: string;
+  features: string[];
+  requestOwners: string[];
+};
 
 export default function ProbeClient() {
   const [wallets, setWallets] = useState<readonly WalletWithStarknetFeatures[]>([]);
   const [busy, setBusy] = useState(false);
-  const [identity, setIdentity] = useState<{
-    name: string;
-    version: string;
-    address: string;
-    chainId: string;
-  } | null>(null);
+  const [identity, setIdentity] = useState<Identity | null>(null);
   const [connected, setConnected] = useState<WalletWithStarknetFeatures | null>(null);
   const [rows, setRows] = useState<Row[]>([]);
   const [notes, setNotes] = useState<string[]>([]);
@@ -84,6 +78,17 @@ export default function ProbeClient() {
     return () => unsub();
   }, []);
 
+  /** The one place that knows how to reach the wallet API. */
+  function api(wallet: WalletWithStarknetFeatures) {
+    const feature = wallet.features[StarknetWalletApi];
+    if (!feature || typeof feature.request !== "function") {
+      throw new Error(
+        `This wallet announces no usable "${StarknetWalletApi}" feature. Announced: ${Object.keys(wallet.features).join(", ")}`,
+      );
+    }
+    return feature;
+  }
+
   async function connect(wallet: WalletWithStarknetFeatures) {
     setBusy(true);
     setRows([]);
@@ -91,52 +96,71 @@ export default function ProbeClient() {
     setDeep(false);
     const found: Row[] = [];
     const log: string[] = [];
+
     try {
+      const feature = api(wallet);
       const w = wallet as never;
+
       const accounts = (await walletV6.requestAccounts(w)) as string[];
       const chainId = (await walletV6.requestChainId(w)) as string;
 
-      let version = "not reported";
+      let specs = "not reported";
       try {
-        const specs = await walletV6.supportedSpecs(w);
-        version = Array.isArray(specs) ? specs.join(", ") : String(specs);
+        const s = await walletV6.supportedSpecs(w);
+        specs = Array.isArray(s) ? s.join(", ") : String(s);
       } catch (e) {
         log.push(`wallet_supportedSpecs: ${message(e)}`);
       }
 
+      // Non-sensitive structure only: which features exist, and which of them
+      // actually owns a request function. Nothing about accounts or keys.
+      const featureKeys = Object.keys(wallet.features);
+      const requestOwners = featureKeys.filter((k) => {
+        const f = (wallet.features as Record<string, unknown>)[k];
+        return typeof (f as { request?: unknown })?.request === "function";
+      });
+
       setConnected(wallet);
       setIdentity({
         name: wallet.name ?? "unnamed",
-        version,
+        walletId: feature.id ?? "not reported",
+        walletVersion: feature.walletVersion ?? "not reported",
+        featureVersion: feature.version ?? "not reported",
+        specs,
         address: accounts?.[0] ?? "none returned",
         chainId,
+        features: featureKeys,
+        requestOwners,
       });
 
-      // The sprint's own recommended capability test, and read-only.
+      // Read-only, and the sprint's own recommended capability test.
       try {
-        const balances = await (wallet as unknown as {
-          request: (a: unknown) => Promise<unknown>;
-        }).request({ type: "wallet_strk20Balances", params: { tokens: TOKENS } });
+        const balances = await feature.request({
+          type: "wallet_strk20Balances",
+          params: { tokens: TOKENS },
+        });
         found.push({
-          label: "STRK20 balances API",
+          label: "wallet_strk20Balances",
           verdict: "SUPPORTED",
-          detail: JSON.stringify(balances).slice(0, 300),
+          detail: JSON.stringify(balances).slice(0, 400),
         });
       } catch (e) {
         const c = classify(e);
-        found.push({ label: "STRK20 balances API", verdict: c.verdict, detail: c.detail });
+        found.push({ label: "wallet_strk20Balances", verdict: c.verdict, detail: c.detail });
       }
 
-      found.push({ label: "Shield / deposit", verdict: "UNKNOWN" });
-      found.push({ label: "Private transfer", verdict: "UNKNOWN" });
-      found.push({ label: "Unshield / withdraw", verdict: "UNKNOWN" });
+      found.push({ label: "wallet_strk20PrepareInvoke", verdict: "UNKNOWN" });
+      for (const label of ["Shield / deposit", "Private transfer", "Unshield / withdraw"]) {
+        found.push({ label, verdict: "UNKNOWN", sub: "waiting on the prepare-invoke check" });
+      }
       found.push({
         label: "Arbitrary registered recipient",
         verdict: "SUPPORTED BY API",
         detail:
-          "Wallet API v0.10.3 types the transfer recipient as a plain ADDRESS, " +
-          "described as the registered recipient inside the pool. No wallet-ownership, " +
-          "contact or custody constraint. Runtime behaviour stays unverified until a real transfer.",
+          "Wallet API 0.10.3 types STRK20_TRANSFER_ACTION.recipient as a plain ADDRESS, " +
+          "described as the registered recipient inside the pool. No wallet-ownership, contact " +
+          "or custody constraint.",
+        sub: "Runtime: UNVERIFIED until a real transfer is made.",
       });
     } catch (e) {
       log.push(`connect: ${message(e)}`);
@@ -148,67 +172,87 @@ export default function ProbeClient() {
   }
 
   /**
-   * Method-existence check. Every call here is made with deliberately invalid
-   * parameters: the action list is empty, and the spec requires at least one
-   * item, so the wallet has nothing it could build, prompt for or submit. The
-   * only thing read is which way it refuses.
+   * Existence check for `wallet_strk20PrepareInvoke`.
+   *
+   * The action list is empty on purpose. The spec requires at least one action,
+   * so there is no deposit, no transfer, no withdrawal and nothing executable
+   * in this request. The wallet has nothing it could build, prompt for or
+   * submit; the only thing read is which way it refuses. `simulate: true` is
+   * set as a second belt, since it tells the wallet to skip proof generation
+   * even if it somehow got that far.
+   *
+   * If a wallet opens a signing or confirmation dialog for this, that is a
+   * finding about the wallet, and the probe stops there either way.
    */
-  async function checkMethods() {
+  async function checkPrepareInvoke() {
     if (!connected) return;
     setBusy(true);
-    const w = connected as unknown as { request: (a: unknown) => Promise<unknown> };
     const next = [...rows];
-    const log = [...notes];
 
-    const probes: Array<{ label: string; type: string }> = [
-      { label: "Shield / deposit", type: "wallet_strk20PrepareInvoke" },
-      { label: "Private transfer", type: "wallet_strk20PrepareInvoke" },
-      { label: "Unshield / withdraw", type: "wallet_strk20PrepareInvoke" },
-    ];
-
-    // One call answers for all three: they are the same method with different
-    // action variants, so if the method is absent none of them exist.
     let verdict: Verdict = "UNKNOWN";
     let detail = "";
     try {
-      await w.request({ type: probes[0].type, params: { actions: [], simulate: true } });
-      // A wallet that accepts an empty action list has answered without
-      // building anything, which still tells us the method is present.
+      const feature = api(connected);
+      await feature.request({
+        type: "wallet_strk20PrepareInvoke",
+        params: { actions: [], simulate: true },
+      });
       verdict = "SUPPORTED";
-      detail = "the method answered an empty action list without building anything";
+      detail = "answered an empty action list without building anything";
     } catch (e) {
       const c = classify(e);
       verdict = c.verdict;
       detail = c.detail;
     }
 
-    for (const p of probes) {
-      const i = next.findIndex((r) => r.label === p.label);
-      if (i >= 0) next[i] = { label: p.label, verdict, detail: `${p.type}: ${detail}` };
-    }
+    const put = (label: string, v: Verdict, d?: string, sub?: string) => {
+      const i = next.findIndex((r) => r.label === label);
+      const row = { label, verdict: v, detail: d, sub };
+      if (i >= 0) next[i] = row;
+      else next.push(row);
+    };
+
+    put("wallet_strk20PrepareInvoke", verdict, detail);
+
+    // Deposit, transfer and withdraw are action variants of this one method,
+    // so its presence answers for all three and its absence rules out all three.
+    const viaPrepare: Verdict = verdict === "SUPPORTED" ? "SUPPORTED" : verdict;
+    const sub =
+      verdict === "SUPPORTED"
+        ? "via prepare-invoke. Not executed."
+        : "same method, so the same answer.";
+    put("Shield / deposit", viaPrepare, undefined, sub);
+    put("Private transfer", viaPrepare, undefined, sub);
+    put("Unshield / withdraw", viaPrepare, undefined, sub);
 
     setRows(next);
-    setNotes(log);
     setDeep(true);
     setBusy(false);
   }
 
   const colour = (v: Verdict) =>
     v === "SUPPORTED" || v === "SUPPORTED BY API"
-      ? "var(--ok, #067d38)"
+      ? "#067d38"
       : v === "UNSUPPORTED" || v === "ERROR"
-        ? "var(--danger, #a11)"
-        : "var(--muted, #777)";
+        ? "#a11"
+        : "#777";
+
+  const cell: React.CSSProperties = {
+    padding: "0.3rem 1rem 0.3rem 0",
+    color: "#777",
+    whiteSpace: "nowrap",
+    verticalAlign: "top",
+  };
 
   return (
-    <main style={{ maxWidth: "44rem", margin: "3rem auto", padding: "0 1.5rem", lineHeight: 1.6 }}>
+    <main style={{ maxWidth: "46rem", margin: "3rem auto", padding: "0 1.5rem", lineHeight: 1.6 }}>
       <h1 style={{ fontSize: "1.4rem", letterSpacing: "-0.01em" }}>
         STRK20 wallet capability probe
       </h1>
-      <p style={{ color: "var(--muted, #666)" }}>
+      <p style={{ color: "#666" }}>
         Development only. This asks the wallet what it can do. It never asks for a signature,
-        never submits a transaction, never approves a token and never moves funds. Connecting
-        is the only permission it requests.
+        never submits a transaction, never approves a token, never moves funds and never
+        switches network. Connecting is the only permission it requests.
       </p>
 
       {!identity && (
@@ -241,29 +285,34 @@ export default function ProbeClient() {
           <table style={{ borderCollapse: "collapse", width: "100%" }}>
             <tbody>
               {[
-                ["Wallet", `${identity.name} (wallet API ${identity.version})`],
+                ["Wallet", `${identity.name}  (id ${identity.walletId}, build ${identity.walletVersion})`],
+                ["Wallet API", identity.specs],
+                ["Feature version", `${StarknetWalletApi} v${identity.featureVersion}`],
                 ["Address", identity.address],
                 ["Network", `${CHAINS[identity.chainId] ?? "unrecognised"} ${identity.chainId}`],
+                ["Announced features", identity.features.join(", ")],
+                ["Owns request()", identity.requestOwners.join(", ") || "none"],
               ].map(([k, v]) => (
                 <tr key={k}>
-                  <td style={{ padding: "0.3rem 1rem 0.3rem 0", color: "var(--muted, #777)", whiteSpace: "nowrap", verticalAlign: "top" }}>
-                    {k}
-                  </td>
-                  <td style={{ padding: "0.3rem 0", wordBreak: "break-all", fontVariantNumeric: "tabular-nums" }}>{v}</td>
+                  <td style={cell}>{k}</td>
+                  <td style={{ padding: "0.3rem 0", wordBreak: "break-all" }}>{v}</td>
                 </tr>
               ))}
             </tbody>
           </table>
 
-          <div style={{ marginTop: "1.6rem", display: "grid", gap: "1rem" }}>
+          <div style={{ marginTop: "1.8rem", display: "grid", gap: "1.1rem" }}>
             {rows.map((r) => (
               <div key={r.label}>
                 <div style={{ display: "flex", justifyContent: "space-between", gap: "1rem" }}>
                   <span>{r.label}</span>
                   <strong style={{ color: colour(r.verdict) }}>{r.verdict}</strong>
                 </div>
+                {r.sub && (
+                  <p style={{ margin: "0.15rem 0 0", fontSize: "0.85rem", color: "#777" }}>{r.sub}</p>
+                )}
                 {r.detail && (
-                  <p style={{ margin: "0.25rem 0 0", fontSize: "0.85rem", color: "var(--muted, #777)", wordBreak: "break-word" }}>
+                  <p style={{ margin: "0.25rem 0 0", fontSize: "0.85rem", color: "#777", wordBreak: "break-word" }}>
                     {r.detail}
                   </p>
                 )}
@@ -275,16 +324,17 @@ export default function ProbeClient() {
             <div style={{ marginTop: "1.8rem" }}>
               <button
                 type="button"
-                onClick={checkMethods}
+                onClick={checkPrepareInvoke}
                 disabled={busy}
                 style={{ font: "inherit", padding: "0.6rem 1rem", cursor: "pointer" }}
               >
-                {busy ? "Checking…" : "Check which STRK20 methods exist"}
+                {busy ? "Checking…" : "Check wallet_strk20PrepareInvoke"}
               </button>
-              <p style={{ fontSize: "0.85rem", color: "var(--muted, #777)", marginTop: "0.5rem" }}>
-                This sends an empty action list on purpose. The spec requires at least one
-                action, so the wallet has nothing it could build, prompt for or submit. The
-                only thing read is which way it refuses.
+              <p style={{ fontSize: "0.85rem", color: "#777", marginTop: "0.5rem" }}>
+                Sends an empty action list on purpose. The spec requires at least one action,
+                so there is no deposit, transfer or withdrawal in the request and nothing
+                executable can come back. Only the shape of the refusal is read. If your
+                wallet opens a signing dialog for this, close it and tell me.
               </p>
             </div>
           )}

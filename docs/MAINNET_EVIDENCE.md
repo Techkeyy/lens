@@ -349,7 +349,10 @@ guidance is to probe rather than assume, using the read-only
 does exactly that: open it in the browser that has the wallet and it reports
 whether the STRK20 methods answer. It signs nothing and submits nothing.
 
-The first attempt at this probe scanned `window` for `starknet_*` keys. It
+Two versions of this probe were wrong before one was right, and both failures
+are worth keeping.
+
+**V1 scanned `window`** for `starknet_*` keys. It
 reported no wallet even with Ready installed, unlocked, and showing the expected
 account. **The wallet was there and the probe was wrong.** Wallets announce
 themselves through the wallet-standard registry now rather than by leaving an
@@ -359,6 +362,28 @@ The replacement lives at `/probe` and uses `createStore` from
 `@starknet-io/get-starknet-discovery`, which is the same discovery the real
 `ConnectWallet` uses, so it exercises the path the product itself depends on. No
 dependency was added: both get-starknet packages were already in `package.json`.
+
+**V2 discovered the wallet correctly and then called `wallet.request(...)`,
+which does not exist.** Ready connected, reported itself as Ready X on mainnet
+at the expected address with wallet API `0.10.3, 0.7.2`, and every capability
+row came back `UNKNOWN` with "wallet.request is not a function". A
+wallet-standard `Wallet` has no request method of its own. The request function
+is published on a named feature:
+
+```
+wallet.features["starknet:walletApi"].request
+```
+
+declared in `@starknet-io/get-starknet-wallet-standard` as
+`StarknetWalletRequestFeature`, carrying `request`, `version`, `walletVersion`
+and `id`. starknet.js reaches it exactly that way internally
+(`walletWSF.features["starknet:walletApi"].request({ type: ... })`), which is
+what made `walletV6.requestAccounts` succeed in the same page where the direct
+call failed. V3 uses that surface.
+
+The STRK20 methods are typed in the installed `@starknet-io/types-js@0.10.3`,
+so `wallet_strk20Balances` and `wallet_strk20PrepareInvoke` both typecheck
+against the real contract rather than being called on faith.
 
 It is development-only. `next build` prerenders the route to a 404 and the
 metadata export was removed so the 404 does not advertise it.
@@ -377,9 +402,25 @@ so the wallet has nothing it could build, prompt for or submit, and the only
 thing read is which way it refuses. Nothing is signed, submitted, approved or
 moved, and the network is never switched.
 
-Validated in a wallet-free browser: it renders, discovery runs, it reports "No
-Starknet wallet announced itself yet", and the console is clean. So a real run
-will mean something. It has **not** been run against the wallet, because no
+Validated three ways, because a probe that lies is worse than no probe:
+
+1. **Wallet-free browser.** Renders, discovery runs, reports "No Starknet wallet
+   announced itself yet", console clean.
+2. **Mock wallet-standard wallet with STRK20**, registered live through the real
+   `wallet-standard:register-wallet` event. Discovery picked it up, identity and
+   feature introspection rendered, `wallet_strk20Balances` returned SUPPORTED
+   with the mock's balances, and `wallet_strk20PrepareInvoke` returned SUPPORTED
+   off an `INVALID_REQUEST_PAYLOAD`. Exactly five calls were made, all read-only
+   or deliberately invalid.
+3. **Mock wallet without STRK20.** Every STRK20 row correctly reported
+   UNSUPPORTED rather than erroring.
+
+The refusal reader is a separate tested module,
+[src/app/probe/classify.ts](../src/app/probe/classify.ts), with 8 tests covering
+both directions, including a regression for "wallet.request is not a function"
+so that failure can never again be reported as anything but an absent method.
+
+It has **not** been run against the real wallet for the STRK20 rows, because no
 Chrome holding the extension is reachable from here.
 
 The proving plan, the self-host specification and the budget live in
