@@ -345,25 +345,42 @@ registration would provide.
 What the spec cannot answer is whether Ready implements those methods for a
 dapp. There is no published list of STRK20-capable wallets, and the sprint's own
 guidance is to probe rather than assume, using the read-only
-`wallet_strk20Balances`. [scripts/ready-probe.html](../scripts/ready-probe.html)
-does exactly that: open it in the browser that has the wallet and it reports,
-per wallet, whether the STRK20 methods answer. It signs nothing and submits
-nothing.
+`wallet_strk20Balances`. The `/probe` route
+does exactly that: open it in the browser that has the wallet and it reports
+whether the STRK20 methods answer. It signs nothing and submits nothing.
 
-Serve it rather than opening the file directly, because extensions generally do
-not inject their provider into `file://` pages:
+The first attempt at this probe scanned `window` for `starknet_*` keys. It
+reported no wallet even with Ready installed, unlocked, and showing the expected
+account. **The wallet was there and the probe was wrong.** Wallets announce
+themselves through the wallet-standard registry now rather than by leaving an
+enumerable global on `window`, so the scan could never have seen it.
+
+The replacement lives at `/probe` and uses `createStore` from
+`@starknet-io/get-starknet-discovery`, which is the same discovery the real
+`ConnectWallet` uses, so it exercises the path the product itself depends on. No
+dependency was added: both get-starknet packages were already in `package.json`.
+
+It is development-only. `next build` prerenders the route to a 404 and the
+metadata export was removed so the 404 does not advertise it.
 
 ```
-python -m http.server 4319 --directory scripts
+npm run dev
 ```
 
-then open `http://localhost:4319/ready-probe.html`.
+then open `http://localhost:3000/probe`.
 
-The probe has been run once already, in a browser with **no** wallet extension,
-and correctly reported "No injected Starknet wallet found on window." That
-confirms the detection path works, so a real run is meaningful. It has **not**
-been run against the wallet: no Chrome with the extension is reachable from
-here, and the answer has to come from the person who has it.
+It asks the wallet to connect, which is a normal connection prompt, then reads
+identity, `wallet_supportedSpecs`, and the read-only `wallet_strk20Balances`. A
+second, separate button checks whether the STRK20 methods exist at all by
+sending a deliberately empty action list: the spec requires at least one action,
+so the wallet has nothing it could build, prompt for or submit, and the only
+thing read is which way it refuses. Nothing is signed, submitted, approved or
+moved, and the network is never switched.
+
+Validated in a wallet-free browser: it renders, discovery runs, it reports "No
+Starknet wallet announced itself yet", and the console is clean. So a real run
+will mean something. It has **not** been run against the wallet, because no
+Chrome holding the extension is reachable from here.
 
 The proving plan, the self-host specification and the budget live in
 [docs/PROVER_PLAN.md](./PROVER_PLAN.md).
@@ -394,7 +411,7 @@ remaining headroom.
 | Verify a live relationship | `npx tsx scripts/verify-relationship.ts <holder> <counterparty> --mainnet` | written, exercised against live mainnet reads |
 | Deploy the registry | `npx tsx scripts/deploy-registry.ts --mainnet` | **done**, see above |
 | Full disclosure lifecycle | `npx tsx scripts/e2e-sepolia.ts` | passing on Sepolia against the live contract |
-| Probe the wallet for STRK20 | serve `scripts/` and open `ready-probe.html` in the browser holding the wallet | written and self-tested, read-only, needs a human at the browser |
+| Probe the wallet for STRK20 | `npm run dev`, then `/probe` in the browser holding the wallet | written and self-tested, read-only, needs a human at the browser |
 
 `verify-relationship.ts` was run against mainnet during this phase. It reads the
 real pool and reports correctly that neither demo address is registered, which is
