@@ -29,7 +29,7 @@ Every fact is labelled **confirmed** (read on an official source), **inferred**
 | Weight | Criterion | Where we stand |
 | --- | --- | --- |
 | 30% | STRK20 integration depth | strong: channels, notes, bindings, a Cairo contract |
-| 30% | Working mainnet product | **zero today**. Biggest gap |
+| 30% | Working mainnet product | registry live on mainnet; pool writes still blocked |
 | 25% | Innovation | modest: IDEA-21 is on their list, three teams in the lane |
 | 15% | Documentation and open source | strong, already the project's best trait |
 
@@ -122,8 +122,9 @@ Disposable development keys only, in `.env.local`, confirmed ignored by Git
 before the first commit. No personal wallet key is used anywhere.
 
 - Sepolia deployer `0x56d8...9124`, deployed, funded 5 STRK by faucet.
-- Mainnet deployer `0x4736...1aca`, generated, **unfunded**. Holds only what the
-  deployment needs, roughly a dollar of STRK.
+- Mainnet deployer `0x4736...1aca`, **deployed and funded**. Held 21.90 STRK,
+  spent 4.05 on the registry declare and deploy, 17.85 left. Nothing personal
+  has ever been in it.
 
 ### Smoke test
 
@@ -145,8 +146,10 @@ deployment.
 The toolchain is proven against reality, not against version numbers. Three
 named items are unresolved:
 
-1. **Mainnet deployer is unfunded.** Blocks the registry deploy and every
-   mainnet transaction. Needs roughly 50 STRK, about a dollar.
+1. **The proving service.** Resolved: the deployer is funded and the registry is
+   live on mainnet. What remains is the prover, which blocks pool writes only.
+   At 6 STRK per pool operation, three pool transactions cost 18 STRK in fees
+   alone, slightly more than the 17.85 STRK left.
 2. **Privacy SDK is not linked.** Cloned from source, not yet built into the
    project. Needed to create payments, not to verify them.
 3. **Signature-derived viewing key is unreproduced.** The pattern is confirmed in

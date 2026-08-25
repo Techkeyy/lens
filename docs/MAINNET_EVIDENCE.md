@@ -206,6 +206,31 @@ live-pool transactions cost **18 STRK in pool fees alone**, before gas. The
 deployer holds 17.85 STRK, so funding is close but not yet sufficient for the
 full three.
 
+## Where the proof is actually checked
+
+The pool is itself an **account contract**: its ABI exposes `__execute__`, and
+`apply_actions` is reached as a self-call. `EMPTY_PROOF_FACTS` is raised by
+`apply_actions` reading facts that the validation phase was supposed to
+establish, which places proof verification in the transaction's `__validate__`
+step rather than in any callable entry point.
+
+Consequences for a self-hosted prover, which is the open question:
+
+- There is no verifier or fact-registry address exposed as a view, so the
+  acceptance rule cannot be read off the contract. It has to be matched against
+  what the validation phase expects.
+- `get_proof_validity_blocks` returns `0x1c2`, **450 blocks**. That is the
+  window a proof stays valid in, and it is what `provingBlockId` has to fall
+  inside. It is generous enough that proving latency is not a design problem.
+- `is_paused` is `false` and `get_upgrade_delay` is `0`, so nothing about the
+  pool's current state blocks writes.
+
+Other live values read at the same time, recorded because they are cheap to
+verify and easy to get wrong: `get_fee_amount` `0x53444835ec580000` (exactly
+6 STRK), `get_fee_collector`
+`0x0d79041634625e5288296fbc648088788710ba44903a3a49468a66567749e77`,
+`get_auditor_public_key` set and non-zero.
+
 ## A useful discovery: `compile_and_panic`
 
 The pool exposes:

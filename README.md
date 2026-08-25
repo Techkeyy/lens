@@ -262,12 +262,19 @@ other wallets adopting the format, not Lens reading their keys.
 
 | Item | Status |
 | --- | --- |
-| Registry, mainnet | not yet deployed, deployer waiting on funds |
-| Registry, sepolia | contract builds, deploy pending |
-| Sepolia account deploy | `0x223a1b6862e0414b6e0471dddb69abd96625ff04b288f50b191edb0502b53da` |
-| Sepolia faucet | `0x778e9ffeecdc630701871d2d7abd4a953e2e63dd86abf6a3000c9788afc6e6b` |
+| Registry, mainnet | **deployed**, `0x7e14bc65…5fb01`, block 13,815,987 |
+| Mainnet declare | `0x6124e178200e715c9c0e6c2c6ed08bf1ea3a46a4b8b11b96e595abe0ff6f12d` |
+| Mainnet deploy | `0x4b41314ed39bc6d41b6791e4550c804e40da8e00b26c8cc8a36fa4b17e1d9d6` |
+| Registry, sepolia | deployed, full lifecycle exercised |
+| STRK20 pool transactions | none yet, blocked on the proving service |
 
-`strk20.json` carries only hashes that exist. No placeholders.
+The mainnet class hash was rebuilt from source immediately before declaring and
+is byte-identical to the one audited on Sepolia.
+
+`strk20.json` carries only hashes that exist. No placeholders. The hashes in it
+are the registry's declare and deploy, which are real mainnet transactions but
+are **not** STRK20 pool transactions, and
+[docs/MAINNET_EVIDENCE.md](docs/MAINNET_EVIDENCE.md) says so in as many words.
 
 ## Contract addresses
 
@@ -275,8 +282,8 @@ other wallets adopting the format, not Lens reading their keys.
 | --- | --- | --- |
 | STRK20 pool | mainnet | `0x040337b1af3c663e86e333bab5a4b28da8d4652a15a69beee2b677776ffe812a` |
 | STRK20 pool | sepolia | `0x0254a6b2997ef52e9f830ce1f543f6b29768295e8d17e2267d672c552cfe0d91` |
-| Lens registry | mainnet | pending |
-| Lens registry | sepolia | pending |
+| Lens registry | mainnet | `0x7e14bc65e5f759da2a981843c485a948dc6e15548fe0ba51e3ca805ca75fb01` |
+| Lens registry | sepolia | `0x51056eb3f8f9408185c9ee9fbfab94f3a5d47c7369a3a72c8783296d1d1b936` |
 
 ## Local development
 
