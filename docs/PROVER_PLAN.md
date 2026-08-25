@@ -116,6 +116,69 @@ the time, by a person, before anything is created.
 
 ---
 
+# Getting the SDK
+
+`@starkware-libs/starknet-privacy-sdk` is **not installable** from the obvious
+places: npmjs returns 404, and GitHub Packages returns 401 even with a token.
+Three routes were considered, in the order the director set.
+
+**A. Official package access.** Blocked. Worth asking the team for, since it is
+the cleanest answer.
+
+**B. Build from the official tag. This works, and is the route taken.**
+
+```bash
+git clone --depth 1 --branch PRIVACY-0.14.3-RC.2 \n  https://github.com/starkware-libs/starknet-privacy.git
+cd starknet-privacy/sdk && npm ci --ignore-scripts
+```
+
+Verified: a sparse checkout of `sdk/` at that tag resolves to commit
+`9bfeb8dd35565a2915a0617dff3f649bd5bb891a`, 54 TypeScript source files, and
+`npm ci` installs 312 packages with **no registry credentials**. Every
+dependency is public: `@starknet-io/types-js`, `ohttp-ts`, `starknet`,
+`starknet-devnet`, `zod`.
+
+Nothing from that checkout is vendored into this repository. It is used as a
+reference implementation to test against, which is route B rather than route C.
+
+**C. Vendoring.** Not needed, and not done.
+
+## The differential test
+
+`scripts/lib/register-invocation.ts` mirrors upstream's
+`ProofInvocationFactory`. `scripts/differential-register.ts` runs both on
+identical inputs and compares every field:
+
+```bash
+PRIVACY_SDK_SRC=/path/to/starknet-privacy/sdk npx tsx scripts/differential-register.ts
+```
+
+It found four real differences, and each would have cost a mainnet fee:
+
+| # | Hand-written version | Upstream |
+| --- | --- | --- |
+| 1 | fetched the pool's live nonce | hardcoded `0n`, "no chain fetch" |
+| 2 | `l1_gas` / `l1_data_gas` `max_amount: 0n` | `max_amount: 1n`; only the *prices* are zero |
+| 3 | hand-computed the transaction hash | `signer.signTransaction` with `walletAddress` set to the pool |
+| 4 | `sender_address` left zero-padded | normalized through BigInt, so `0x0403…` becomes `0x403…` |
+
+A fifth was found by inspection rather than by the harness: upstream builds the
+action enum with **all nine variant keys present** and only the active one
+defined. Building it with a single key lets starknet.js infer the variant index
+from the object's own keys instead of the Cairo variant order. That is correct
+by accident for `SetViewingKey`, which is index 0, and wrong for every other
+action. The test now compares six action types, not just the one being used.
+
+Current result: **identical on all 25 compared fields.** `register-lens.ts` was
+then rewired to use the tested module, so the code that would broadcast is the
+code that was verified.
+
+This does **not** clear the script for mainnet. Two of the three gate conditions
+are still open: the compatible prover revision and its request schema. A
+mainnet `--send` refuses unless `LENS_REGISTER_APPROVED=1` is set explicitly.
+
+---
+
 # Wording that a Lens-operated prover would falsify
 
 Recorded now so it cannot be forgotten, and deliberately **not** yet changed.

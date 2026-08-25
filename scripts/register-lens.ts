@@ -1,6 +1,25 @@
 /**
  * Register the Lens-derived viewing key with the STRK20 pool.
  *
+ * ============================================================================
+ * MAINNET EXECUTION BLOCKED. Dry run and investigation only.
+ *
+ * `--send` is not approved on mainnet until all three of these hold:
+ *   1. the compatible prover revision is confirmed by the team;
+ *   2. the prover request schema is confirmed against that revision;
+ *   3. this file's transaction construction has been differential-tested
+ *      against the exact compatible upstream SDK implementation.
+ *
+ * Why the caution: this reproduces protocol behaviour that the official SDK
+ * owns. Action compilation, virtual transaction construction, transaction
+ * hashing, proof inputs, proof facts and calldata encoding are all
+ * version-specific, and a subtle mismatch spends a real fee to produce an
+ * unusable registration. Reaching the prover boundary in a dry run is evidence
+ * that the plumbing runs, not that it is correct.
+ *
+ * See scripts/differential-register.ts for the comparison harness.
+ * ============================================================================
+ *
  *   npx tsx scripts/register-lens.ts                 dry run, the default
  *   npx tsx scripts/register-lens.ts --send          broadcasts
  *   npx tsx scripts/register-lens.ts --sepolia       against Sepolia instead
@@ -35,21 +54,14 @@
  * a hosted prover is acceptable with a disposable key.
  */
 import { existsSync, readFileSync } from "node:fs";
-import {
-  Account,
-  CairoCustomEnum,
-  CairoOption,
-  CairoOptionVariant,
-  CallData,
-  RpcProvider,
-  ec,
-  constants,
-  hash,
-  num,
-  stark,
-} from "starknet";
+import { Account, CairoOption, CairoOptionVariant, CallData, RpcProvider, constants, num } from "starknet";
 import { NETWORKS, type NetworkConfig } from "../src/utils/networks";
 import { deriveViewingKeyFromPrivateKey, publicViewingKey } from "../src/core/session";
+import {
+  buildProofInvocation,
+  getDefaultProofDetails,
+  serializeClientActions,
+} from "./lib/register-invocation";
 
 const SEPOLIA = process.argv.includes("--sepolia");
 const SEND = process.argv.includes("--send");
@@ -131,78 +143,25 @@ async function main() {
   const expectedPublic = publicViewingKey(viewingKey);
 
   // --- phase 1: the virtual transaction --------------------------------------
-  // Encoded with the pool's own ABI so the ClientAction enum layout comes from
-  // the chain rather than from a guess.
+  // Built by scripts/lib/register-invocation.ts, which mirrors the upstream
+  // SDK's ProofInvocationFactory and is proven field-for-field identical to it
+  // by scripts/differential-register.ts. Do not inline a variation here.
   const cls = (await provider.getClassAt(NET.pool)) as unknown as { abi: unknown };
   const abi = typeof cls.abi === "string" ? JSON.parse(cls.abi) : cls.abi;
-  const poolCallData = new CallData(abi as never);
 
-  const clientActions = [
-    new CairoCustomEnum({ SetViewingKey: { random: num.toHex(BigInt(Date.now()) * 1_000_003n) } }),
-  ];
-  const compileCalldata = poolCallData.compile("compile_actions", {
-    user_addr: address,
-    user_private_key: num.toHex(viewingKey),
-    client_actions: clientActions,
-  });
-
-  // `__validate__` rejects any non-zero price or tip, so the bounds are zero
-  // except for an l2_gas allowance, which the prover permits.
-  const details = stark.v3Details({});
-  const bounds = {
-    ...details.resourceBounds,
-    l2_gas: { max_amount: 100_000_000n, max_price_per_unit: 0n },
-  };
-  const asRpcBounds = (b: typeof bounds) =>
-    Object.fromEntries(
-      Object.entries(b).map(([k, v]) => [
-        k,
-        { max_amount: num.toHex(v.max_amount), max_price_per_unit: num.toHex(v.max_price_per_unit) },
-      ]),
-    );
-
-  const virtualCalldata = CallData.compile([
-    "0x1",
-    NET.pool,
-    hash.getSelectorFromName("compile_actions"),
-    num.toHex(compileCalldata.length),
-    ...compileCalldata,
+  const cairoActions = serializeClientActions([
+    { type: "SetViewingKey", input: { random: BigInt(Date.now()) * 1_000_003n } },
   ]);
-  const poolNonce = await provider.getNonceForAddress(NET.pool);
 
-  const virtualTx = {
-    type: "INVOKE",
-    version: "0x3",
-    sender_address: NET.pool,
-    calldata: virtualCalldata,
-    signature: [] as string[],
-    nonce: poolNonce,
-    resource_bounds: asRpcBounds(bounds),
-    tip: "0x0",
-    paymaster_data: [],
-    account_deployment_data: [],
-    nonce_data_availability_mode: "L1",
-    fee_data_availability_mode: "L1",
-  };
-
-  // The pool authenticates the user over this transaction hash.
-  const txHash = hash.calculateInvokeTransactionHash({
-    senderAddress: virtualTx.sender_address,
-    version: virtualTx.version,
-    compiledCalldata: virtualTx.calldata,
-    chainId: chainId as constants.StarknetChainId,
-    nonce: virtualTx.nonce,
-    accountDeploymentData: [],
-    nonceDataAvailabilityMode: stark.intDAM(details.nonceDataAvailabilityMode),
-    feeDataAvailabilityMode: stark.intDAM(details.feeDataAvailabilityMode),
-    resourceBounds: bounds,
-    tip: details.tip,
-    paymasterData: details.paymasterData,
-  } as never);
-  // The OZ account validates [r, s] over this hash, which is what
-  // `is_valid_signature` checks inside `assert_valid_signature`.
-  const sig = ec.starkCurve.sign(txHash as string, privateKey);
-  virtualTx.signature = [num.toHex(sig.r), num.toHex(sig.s)];
+  const { invocation: virtualTx } = await buildProofInvocation({
+    abi,
+    poolAddress: NET.pool,
+    userAddress: address,
+    viewingKey,
+    cairoActions,
+    signer: account.signer,
+    details: getDefaultProofDetails(NET.chainId),
+  });
 
   const block = await provider.getBlockNumber();
 
@@ -221,8 +180,18 @@ async function main() {
 
   if (!SEND) {
     console.log("\nDRY RUN: nothing was proved and nothing was broadcast.");
-    console.log("Re-run with --send once PROVER_URL is a prover you trust with the viewing key.");
+    console.log("--send is not approved on mainnet yet. See the header of this file.");
     return;
+  }
+
+  if (!SEPOLIA && !process.env.LENS_REGISTER_APPROVED) {
+    fail(
+      "Mainnet --send is gated.\n" +
+        "         This construction has not been differential-tested against the\n" +
+        "         upstream SDK, and a subtle mismatch spends a real fee to produce an\n" +
+        "         unusable registration. Set LENS_REGISTER_APPROVED=1 only after the\n" +
+        "         three conditions in this file's header are met.",
+    );
   }
 
   console.log("\nproving…");

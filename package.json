@@ -13,7 +13,8 @@
     "recovery:eth": "npx tsx scripts/send-recovery-eth.ts",
     "recovery:verify": "npx tsx scripts/verify-recovery-eth.ts",
     "verify:shield": "tsx scripts/verify-shield.ts",
-    "register:lens": "tsx scripts/register-lens.ts"
+    "register:lens": "tsx scripts/register-lens.ts",
+    "diff:register": "tsx scripts/differential-register.ts"
   },
   "dependencies": {
     "@starknet-io/get-starknet-discovery": "^6.0.3",
