@@ -128,7 +128,7 @@ the cleanest answer.
 **B. Build from the official tag. This works, and is the route taken.**
 
 ```bash
-git clone --depth 1 --branch PRIVACY-0.14.3-RC.2 \n  https://github.com/starkware-libs/starknet-privacy.git
+git clone --depth 1 --branch PRIVACY-0.14.3-RC.2 https://github.com/starkware-libs/starknet-privacy.git
 cd starknet-privacy/sdk && npm ci --ignore-scripts
 ```
 
