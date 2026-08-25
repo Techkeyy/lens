@@ -217,51 +217,89 @@ three.
 
 ---
 
-# Budget, corrected
+# Budget, with measured gas
 
-Pool fee is `get_fee_amount()`, read live at block 13,854,850: **6 STRK per
-`apply_actions`, unconditional**. Balances read at the same block.
+Earlier versions of this budget estimated gas at "≤1.0 STRK" per pool
+operation. **That was wrong, and it is the finding that matters here.**
 
-Ready needs **three** pool operations, not four, because the first shield
-registers:
+Gas was measured off eight real, successful mainnet pool transactions in the
+last ~9,000 blocks, reading `actual_fee` from their receipts:
 
-| Step | Pool fee | Value moved |
-| --- | --- | --- |
-| First shield, which registers | 6 | 3 STRK deposited |
-| Private transfer A to Lens | 6 | 1 STRK, inside the pool |
-| Private transfer B to Lens | 6 | 1 STRK, inside the pool |
-| **Total** | **18** | **3 STRK deposited** |
+| Gas paid, STRK | Shape |
+| --- | --- |
+| 2.745 | NoteUsed + Withdrawal |
+| 2.753 | NoteUsed + Withdrawal |
+| 2.755 | NoteUsed + Withdrawal |
+| 2.769 | NoteUsed + Withdrawal |
+| **2.781** | **NoteUsed + EncNoteCreated**, a pure private transfer |
+| 2.946 | NoteUsed + EncNoteCreated + Withdrawal |
+| 3.016 | NoteUsed + EncNoteCreated + Withdrawal |
+| 3.046 | NoteUsed + EncNoteCreated + Withdrawal |
+
+Mean 2.85, max 3.05. The first-shield transaction examined earlier paid
+**2.91**. These are proof-carrying transactions, so the calldata is large and
+the gas is nothing like an ordinary transfer.
+
+**A pool operation therefore costs about 6 + 2.9 = 8.9 STRK, not 6.**
 
 | | Lens `0x4736...1aca` | Ready `0x04c7...99c8` |
 | --- | --- | --- |
-| Balance, live | 17.8488 STRK | 24.9445 STRK |
-| Allowance to pool | 0 | 0 |
-| Registered | no | no |
-| Pool operations | 1 (registration) | 3 |
-| Pool fees | 6 | 18 |
-| Deposit | none | 3 |
-| Gas, estimated | ≤0.8 (register, authorize, revoke) | ≤1.0 (approval plus three calls) |
-| **Remaining** | **≈11.0** | **≈2.9** |
+| Balance, live | 17.8488 | 24.9445 |
+| Pool operations | 1 | 3 |
+| Fees | 6 | 18 |
+| Gas at 2.9 | 2.9 | 8.7 |
+| Deposit | none | D |
+| Registry writes | ≈0.2 | none |
+| **Needed** | **≈9.1** | **≈26.7 + D** |
+| **Remaining** | **≈8.7** | **≈-1.8 - D** |
 
-**Redistribution required: no. External top-up required: no.**
+**Ready cannot afford three pool operations**, and that is true even with a
+zero deposit. The shortfall is about 1.8 STRK before anything is shielded.
 
-Both accounts fund their own half. Ready keeps roughly 2.9 STRK of public margin
-after everything, which is thin but real, and the deposit can be reduced to 2
-STRK if the margin needs to be wider.
+Across both accounts there is enough: 42.79 STRK held against roughly 38.8
+needed. Only the distribution is wrong.
 
-Chosen demo amounts:
+## Two ways out
+
+**Option A: move STRK from Lens to Ready.** Keeps all three payment-side
+transactions, which is the stronger evidence set because it does not depend on
+a judge counting registration as payment activity.
+
+Moving 8 STRK leaves Ready ≈32.9 against ≈29.7 needed with a 3 STRK deposit,
+and Lens ≈9.85 against ≈9.1. Both margins are thin, roughly 3 STRK and 0.75
+STRK, and gas moves.
+
+**Option B: two Ready operations, and let Lens registration be the third
+hash.** Shield, one private transfer, and the Lens registration are three
+qualifying pool transactions on their own.
+
+| | Needed | Held | Margin |
+| --- | --- | --- | --- |
+| Ready, 2 ops + 3 STRK deposit | ≈20.8 | 24.94 | ≈4.1 |
+| Lens, 1 op + registry | ≈9.1 | 17.85 | ≈8.7 |
+
+**No redistribution, no top-up, and comfortable margins on both sides.** The
+cost is that the second private transfer becomes optional, which also means
+losing the later-activity demo unless the budget allows it after the fact.
+
+## Recommendation
+
+Neither, yet. **Do the shield first and measure it**, because it is the one
+transaction whose real cost we can learn without committing to a plan. It is
+also transaction 1 under either option.
+
+After it lands, the receipt gives exact gas for our own account and the
+decision becomes arithmetic instead of an estimate. If the measured cost is at
+the low end, Option A fits without moving anything.
+
+Chosen demo amounts, unchanged and still affordable under both options:
 
 | | |
 | --- | --- |
 | Deposit | 3 STRK |
 | Private transfer A | 1 STRK |
-| Private transfer B | 1 STRK |
-| Left shielded | 1 STRK |
-
-Small, round, readable, and nothing meaningful at risk. The deposit is the
-smallest amount that still leaves a visible remainder after two transfers, which
-matters because the demo shows a snapshot boundary and a leftover balance makes
-that legible.
+| Private transfer B | 1 STRK, budget permitting |
+| Left shielded | 1 STRK, so the snapshot boundary is visible |
 
 # Open questions
 
