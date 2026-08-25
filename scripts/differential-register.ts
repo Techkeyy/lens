@@ -21,7 +21,8 @@
  *
  * Its dependencies are all public; no registry credentials are needed.
  */
-import { existsSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { existsSync, readFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 import { CairoCustomEnum, RpcProvider, Signer, constants } from "starknet";
 import { NETWORKS } from "../src/utils/networks";
@@ -31,8 +32,41 @@ import {
   serializeClientActions,
 } from "./lib/register-invocation";
 
-const SDK = process.env.PRIVACY_SDK_SRC;
+/**
+ * The upstream checkout to test against. A path argument wins over the
+ * environment variable, so a second tag can be checked without re-exporting.
+ *
+ *   npx tsx scripts/differential-register.ts /path/to/starknet-privacy/sdk
+ *
+ * `EXPECTED_SDK_TAG` optionally pins which revision this run is allowed to
+ * accept. A differential pass against RC.2 says nothing about RC.5, so when the
+ * team names a different tag, check out that tag and set this.
+ */
+const SDK = process.argv.slice(2).find((a) => !a.startsWith("--")) ?? process.env.PRIVACY_SDK_SRC;
+const EXPECTED_TAG = process.env.EXPECTED_SDK_TAG;
 const NET = NETWORKS.mainnet;
+
+/** Identify the checkout, so the result is attributable to a revision. */
+function describeCheckout(sdkDir: string): { version: string; commit: string; tag: string } {
+  let version = "unknown";
+  try {
+    version = JSON.parse(readFileSync(`${sdkDir}/package.json`, "utf8")).version ?? "unknown";
+  } catch {
+    /* reported as unknown */
+  }
+  const git = (args: string[]) => {
+    try {
+      return execFileSync("git", ["-C", sdkDir, ...args], { encoding: "utf8" }).trim();
+    } catch {
+      return "unknown";
+    }
+  };
+  return {
+    version,
+    commit: git(["rev-parse", "HEAD"]),
+    tag: git(["describe", "--tags", "--always"]),
+  };
+}
 
 // Fixed, disposable, and never funded. Determinism matters more than secrecy
 // here, and a throwaway keeps a real key out of a comparison harness.
@@ -84,10 +118,30 @@ async function main() {
     NET.chainId as constants.StarknetChainId,
   );
 
-  console.log(`upstream  ${SDK}`);
-  console.log(`pool      ${NET.pool}`);
-  console.log(`account   ${TEST_ADDRESS}`);
-  console.log(`signer    fixed throwaway, not from .env.local\n`);
+  const checkout = describeCheckout(SDK);
+  console.log(`upstream      ${SDK}`);
+  console.log(`sdk version   ${checkout.version}`);
+  console.log(`sdk commit    ${checkout.commit}`);
+  console.log(`sdk tag       ${checkout.tag}`);
+  console.log(`pool          ${NET.pool}`);
+  console.log(`pool class    ${await provider.getClassHashAt(NET.pool)}`);
+  console.log(`account       ${TEST_ADDRESS}`);
+  console.log(`signer        fixed throwaway, not from .env.local`);
+
+  // A pass against one revision says nothing about another, so a run may be
+  // pinned to the revision the team actually named.
+  if (
+    EXPECTED_TAG &&
+    !checkout.tag.includes(EXPECTED_TAG) &&
+    !checkout.version.includes(EXPECTED_TAG)
+  ) {
+    console.error(
+      `\nREFUSED: EXPECTED_SDK_TAG is ${EXPECTED_TAG}, but this checkout reports ` +
+        `${checkout.tag} / ${checkout.version}.`,
+    );
+    process.exit(1);
+  }
+  console.log("");
 
   let allSame = true;
 
@@ -162,7 +216,7 @@ async function main() {
 
   console.log(
     allSame
-      ? "\nVERDICT: identical. Our construction matches the upstream SDK on every field."
+      ? `\nVERDICT: identical. Our construction matches upstream ${checkout.tag} on every field.`
       : "\nVERDICT: DIVERGENT. Do not broadcast. Every difference above must be explained.",
   );
   if (!allSame) process.exitCode = 1;

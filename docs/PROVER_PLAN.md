@@ -55,10 +55,23 @@ The matrix row exists to be used whole, and the pool on mainnet is not the pool
 in that row. Standing up `RC.2` because it is the last published row would be
 guessing with real money.
 
-**Blocking question for the sprint team:** which `transaction-prover` image and
-SDK revision are compatible with the pool class actually deployed at
-`0x040337b1af3c663e86e333bab5a4b28da8d4652a15a69beee2b677776ffe812a`? Already
-asked; awaiting the answer.
+**Blocking questions for the sprint team**, and nothing broader is needed:
+
+| | |
+| --- | --- |
+| A | The exact `transaction-prover` tag or image compatible with the pool class actually deployed at `0x0403…812a`. |
+| B | The exact SDK revision expected against that prover. |
+| C | The prover request endpoint and schema, if it differs from the RC.2 SDK implementation. |
+| D | Whether the Sepolia prover speaks the same proving API as the mainnet-compatible build. |
+
+## Blockers
+
+1. **Mainnet-compatible prover tag or image.**
+2. **Prover request compatibility.**
+3. **Sepolia prover URL, for the rehearsal.**
+
+Resolved and removed from this list: *SDK unavailable* and *SDK package access*.
+The upstream source route works and is now the canonical integration path.
 
 ---
 
@@ -122,8 +135,8 @@ the time, by a person, before anything is created.
 places: npmjs returns 404, and GitHub Packages returns 401 even with a token.
 Three routes were considered, in the order the director set.
 
-**A. Official package access.** Blocked. Worth asking the team for, since it is
-the cleanest answer.
+**A. Official package access.** Blocked, and **no longer needed**. It is off the
+blocker list.
 
 **B. Build from the official tag. This works, and is the route taken.**
 
@@ -169,9 +182,22 @@ from the object's own keys instead of the Cairo variant order. That is correct
 by accident for `SetViewingKey`, which is index 0, and wrong for every other
 action. The test now compares six action types, not just the one being used.
 
-Current result: **identical on all 25 compared fields.** `register-lens.ts` was
-then rewired to use the tested module, so the code that would broadcast is the
-code that was verified.
+Current result: **identical on all 25 compared fields**, against sdk commit
+`9bfeb8dd35565a2915a0617dff3f649bd5bb891a`, version `0.14.3-rc.2`, with the live
+pool class `0x67dddd89…` recorded alongside. `register-lens.ts` was then rewired
+onto the tested module, so the code that would broadcast is the code that was
+verified.
+
+**A pass against one revision says nothing about another.** If the team names a
+tag other than RC.2, check that tag out and re-run, pinning it so a stale
+checkout cannot quietly satisfy the gate:
+
+```bash
+EXPECTED_SDK_TAG=<their-tag> npx tsx scripts/differential-register.ts /path/to/sdk
+```
+
+The harness prints the checkout's version, commit and tag, and refuses when the
+pin does not match.
 
 This does **not** clear the script for mainnet. Two of the three gate conditions
 are still open: the compatible prover revision and its request schema. A

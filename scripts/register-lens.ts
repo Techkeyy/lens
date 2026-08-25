@@ -84,6 +84,38 @@ function env(name: string): string {
   return value;
 }
 
+/**
+ * A prover URL can carry an API key in a query string or in userinfo, so only
+ * the host is ever logged. Never print PROVER_URL itself.
+ */
+function proverHost(): string {
+  try {
+    const u = new URL(PROVER_URL!);
+    return `${u.protocol}//${u.host}`;
+  } catch {
+    return "unparseable URL, not printed";
+  }
+}
+
+/**
+ * Ask the prover what it is before asking it to do anything. Reported in the
+ * pre-flight so the revision in play is on the record next to the transaction
+ * it produced.
+ */
+async function proverSpecVersion(): Promise<string> {
+  try {
+    const res = await fetch(PROVER_URL!, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "starknet_specVersion", params: [] }),
+    });
+    const body = (await res.json()) as { result?: string; error?: { message?: string } };
+    return body.result ?? `no version reported (${body.error?.message ?? `HTTP ${res.status}`})`;
+  } catch (e) {
+    return `unreachable (${(e as Error).message.slice(0, 60)})`;
+  }
+}
+
 /** JSON-RPC to the proving service. Shape from types-js proving-api. */
 async function prove(transaction: unknown, blockNumber: number) {
   const res = await fetch(PROVER_URL!, {
@@ -164,19 +196,27 @@ async function main() {
   });
 
   const block = await provider.getBlockNumber();
+  const poolClass = await provider.getClassHashAt(NET.pool);
+  const spec = await proverSpecVersion();
+  const gateOpen = SEPOLIA || !!process.env.LENS_REGISTER_APPROVED;
 
-  console.log(`network             ${NET.label}`);
-  console.log(`pool                ${NET.pool}`);
-  console.log(`lens account        ${address}`);
-  console.log(`viewing key         derived in memory, not printed`);
-  console.log(`public viewing key  ${num.toHex(expectedPublic)}`);
-  console.log(`currently on chain  0 (not registered)`);
-  console.log(`prover              ${PROVER_URL}`);
-  console.log(`proving block       ${block}`);
-  console.log(`client actions      SetViewingKey`);
-  console.log(`screening           None, required for a non-deposit action`);
-  console.log(`pool fee            6 STRK, plus roughly 2.9 STRK of gas`);
-  console.log(`mode                ${SEND ? "SEND" : "DRY RUN"}`);
+  const row = (k: string, v: string) => console.log(`  ${k.padEnd(22)}${v}`);
+  console.log("PRE-FLIGHT");
+  row("chain", `${NET.label}  ${chainId}`);
+  row("pool", NET.pool);
+  row("pool class hash", poolClass);
+  row("lens account", address);
+  row("public viewing key", num.toHex(expectedPublic));
+  row("viewing key", "derived in memory, never printed");
+  row("currently on chain", "0, not registered");
+  row("prover host", proverHost());
+  row("prover spec version", spec);
+  row("proving block", String(block));
+  row("client actions", "SetViewingKey");
+  row("screening", "None, required for a non-deposit action");
+  row("expected fee", "6 STRK pool fee, plus roughly 2.9 STRK of gas");
+  row("approval gate", gateOpen ? "OPEN" : "CLOSED, LENS_REGISTER_APPROVED is not set");
+  row("mode", SEND ? "SEND" : "DRY RUN");
 
   if (!SEND) {
     console.log("\nDRY RUN: nothing was proved and nothing was broadcast.");
