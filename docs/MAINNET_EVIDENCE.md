@@ -350,6 +350,24 @@ does exactly that: open it in the browser that has the wallet and it reports,
 per wallet, whether the STRK20 methods answer. It signs nothing and submits
 nothing.
 
+Serve it rather than opening the file directly, because extensions generally do
+not inject their provider into `file://` pages:
+
+```
+python -m http.server 4319 --directory scripts
+```
+
+then open `http://localhost:4319/ready-probe.html`.
+
+The probe has been run once already, in a browser with **no** wallet extension,
+and correctly reported "No injected Starknet wallet found on window." That
+confirms the detection path works, so a real run is meaningful. It has **not**
+been run against the wallet: no Chrome with the extension is reachable from
+here, and the answer has to come from the person who has it.
+
+The proving plan, the self-host specification and the budget live in
+[docs/PROVER_PLAN.md](./PROVER_PLAN.md).
+
 ## Budget, from the live contract
 
 `collect_fee()` runs unconditionally inside `apply_actions`, before the actions
@@ -376,7 +394,7 @@ remaining headroom.
 | Verify a live relationship | `npx tsx scripts/verify-relationship.ts <holder> <counterparty> --mainnet` | written, exercised against live mainnet reads |
 | Deploy the registry | `npx tsx scripts/deploy-registry.ts --mainnet` | **done**, see above |
 | Full disclosure lifecycle | `npx tsx scripts/e2e-sepolia.ts` | passing on Sepolia against the live contract |
-| Probe the wallet for STRK20 | open `scripts/ready-probe.html` in the browser holding the wallet | written, read-only, needs a human at the browser |
+| Probe the wallet for STRK20 | serve `scripts/` and open `ready-probe.html` in the browser holding the wallet | written and self-tested, read-only, needs a human at the browser |
 
 `verify-relationship.ts` was run against mainnet during this phase. It reads the
 real pool and reports correctly that neither demo address is registered, which is
@@ -403,11 +421,19 @@ No key, signature or proof fragment appears in this document or any other.
 
 # What `strk20.json` contains
 
-Two confirmed mainnet transaction hashes and one mainnet contract address, all
-of them the Lens disclosure registry: its declare, its deploy, and the deployed
-contract.
+`transactions` is **empty**, and stays empty until a genuine STRK20 pool
+transaction exists.
 
-Stated plainly so nothing is read as more than it is: **these are Lens registry
-transactions, not STRK20 pool transactions.** The pool count is still 0 of 3,
-as recorded at the top of this document. Nothing Sepolia and nothing predicted
-appears in that file.
+It briefly carried the registry declare and deploy hashes. That was wrong and
+has been corrected. The sprint scores that field by checking each hash on chain
+for having "touched the STRK20 pool", so a registry hash there is not a
+generous reading of the rules, it is an entry that fails the check. A note in
+the prose explaining the difference does not fix a manifest that claims the
+wrong thing, so the hashes were removed rather than annotated.
+
+`contracts` holds the Lens registry
+`0x7e14bc65e5f759da2a981843c485a948dc6e15548fe0ba51e3ca805ca75fb01`, which is
+what that field is for: "Deployed addresses, shown with their network."
+
+The registry declare and deploy hashes remain recorded above under
+[LENS REGISTRY](#lens-registry), which is the right place for them.
