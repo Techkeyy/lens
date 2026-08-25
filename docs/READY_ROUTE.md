@@ -29,7 +29,52 @@ never used the pool, and it is the thing to resolve before anything else.
 
 ---
 
-# There is no dapp-driven registration
+# Registration: settled on chain, not from documents
+
+**The first shield registers the account, in the same transaction, for one pool
+fee.** Not inferred. Read off mainnet.
+
+Three `ViewingKeySet` events were found in the last ~9,000 blocks. Taking the
+most recent, `0x4f5c129690bf459da7edc625d127ecf4eaad3985df713a986d07424666d9378`
+at block 13,853,717:
+
+| | |
+| --- | --- |
+| Type | INVOKE v3, `SUCCEEDED ACCEPTED_ON_L2` |
+| Calls in the transaction | **1** |
+| Target | the pool |
+| Selector | `apply_actions` |
+| Pool events emitted | `ViewingKeySet`, `Deposit`, `EncNoteCreated` |
+
+One call. One `apply_actions`. Registration, deposit and the encrypted note all
+came out of it together.
+
+That matches the SDK exactly: `sdk/src/internal/compiler.ts` puts
+`SetViewingKey` first in the same `clientActions` list, then the self-channel,
+then the deposit, and one list compiles to one `apply_actions`.
+
+**Consequences:**
+
+- No standalone Ready registration step.
+- No second 6 STRK fee for registering.
+- Ready's first shield *is* the registration event, and is itself a qualifying
+  pool transaction.
+
+An earlier version of this document budgeted for a separate registration and
+concluded Ready was about 1 STRK short. That conclusion was wrong, and the
+redistribution it recommended is not needed.
+
+The same transaction also shows the token flows: two `Approval`/`Transfer` pairs
+on STRK inside the call, one for the 6 STRK protocol fee and one for the deposit
+itself, both consuming allowance the account had already granted. Live allowance
+from both our accounts to the pool currently reads **0**, so an approval has to
+happen before the shield. Ready requests it as part of its own flow.
+
+---
+
+# There is no dapp-driven registration method
+
+
 
 The Wallet API at `0.10.3` defines exactly three STRK20 methods:
 `wallet_strk20InvokeTransaction`, `wallet_strk20PrepareInvoke`,
@@ -43,25 +88,16 @@ must not pretend to. The spec's wording on `wallet_strk20InvokeTransaction` is:
 > Registration into the pool is transparent — if the user is not registered,
 > `NOT_REGISTERED` is returned.
 
-Those two halves pull in different directions, and the honest reading is that
-registration is the wallet's business and the dapp's only correct response to
-`NOT_REGISTERED` is to send the user somewhere that can register them.
+Read together with the on-chain evidence above, "transparent" means what it
+says: the wallet registers the user as part of the first shield, without the
+dapp asking and without a method for the dapp to ask with. `NOT_REGISTERED` is
+what the *read* methods return until that has happened.
 
-On the SDK route the mechanics are visible and unambiguous.
-`sdk/src/internal/compiler.ts` builds one `clientActions` list, and when
-`autoRegister` is set and the user has no public key it puts `SetViewingKey`
-first in **that same list**, followed by the self-channel and then the deposit.
-One list compiles to one `apply_actions`, so on that route registration is
-bundled into the first transaction and costs no extra pool fee.
-
-Whether Ready mirrors that internally is **not provable from the spec**, and
-guessing would be exactly the kind of assumption that has already cost us two
-probe rewrites. It is listed below as the one open mechanical question.
-
-The documented way to resolve it costs nothing to plan for: the sprint's own
-`MAINNET-DAY-0.md` points at `strk20.starknet.io/app`, "which does registration
-and shielding through the UI". Registering the Ready account there once removes
-the ambiguity entirely.
+So the correct dapp behaviour is not to send the user elsewhere to register. It
+is to offer the shield, and let registration happen inside it. `/ready`
+implements exactly that: the shield button is enabled while unregistered and
+labelled as the thing that registers the account, and there is no register
+button, because there is no register method.
 
 ---
 
@@ -70,7 +106,7 @@ the ambiguity entirely.
 Both matter, and both are recorded here because following the guide as written
 would fail.
 
-## 1. "Registration and shielding need no proof" is not true of this pool
+## 1. "Registration and shielding need no proof" is not true of this pool — resolved
 
 `MAINNET-DAY-0.md` states:
 
@@ -96,11 +132,27 @@ Confirmed live as well: calling `apply_actions` read-only with an empty action
 list and `screening: None` reverts with `EMPTY_PROOF_FACTS`, not with a
 screening or argument error.
 
-If the guidance is right, there is a mechanism not visible in the ABI or the
-RC.2 source, and finding it would unblock this project completely. That makes it
-worth asking about rather than dismissing. If the guidance is simply stale, then
-registration needs a prover like everything else, and the plan already accounts
-for that.
+**Resolved by the same mainnet transaction.** `0x4f5c1296…` registered and
+shielded through `apply_actions` and succeeded. `validate_proof` runs first in
+that function and asserts the proof facts are non-empty, so a transaction that
+succeeded must have carried them. Registration on this pool needs a proof.
+
+The RPC transaction object does not expose a `proof_facts` field, which is why
+this had to be established by inference from the contract rather than read
+directly: the field is consumed from `tx_info` at execution, not serialised back
+by `starknet_getTransactionByHash`.
+
+Of the four candidate explanations, **C is the answer**: Ready's wallet route
+supplies the proof facts transparently. The user never runs a prover; the wallet
+does. The Day-0 sentence is true from a *user's* point of view and false as a
+statement about the protocol, and reading it as the latter is what sent us
+looking for a registration path that does not exist.
+
+**Implication for Lens, and it is the important one:** Lens registration is
+*not* exempt. It still needs a prover, and Lens has no wallet to do the proving
+on its behalf, because the whole point is that Lens registers a key it derives
+itself. Nothing here unblocks step 3. Lens registration must not be attempted on
+the assumption that it is proof-free.
 
 ## 2. The published viewing-key derivation is missing the canonical fold
 
@@ -144,85 +196,83 @@ lost and the existing plan stands. **Untested. Do not build on it.**
 
 Each step, with what it actually costs and who must approve it.
 
-| # | Step | Submitted by | Pool tx | 6 STRK fee | Screening | Ready confirm | Lens prover | Qualifies as evidence |
+| # | Step | Submitted by | Pool tx | 6 STRK fee | Screening | Ready confirm | Lens prover | Evidence |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| 0a | Approve pool for STRK fee | Ready | no | no | no | yes | no | no |
-| 0b | Approve pool for the deposit amount | Ready | no | no | no | yes | no | no |
-| 1 | Register Ready | Ready, via its own UI or `strk20.starknet.io/app` | **yes** | **yes**, unless bundled into step 2 | no | yes | no | **yes** |
-| 2 | Shield / deposit | Ready, `wallet_strk20InvokeTransaction` | **yes** | **yes** | **yes** | yes | no | **yes** |
-| 3 | Register Lens | Lens account, SDK route | **yes** | **yes** | no | no | **yes** | **yes** |
-| 4 | Private transfer A to Lens | Ready, `wallet_strk20InvokeTransaction` | **yes** | **yes** | no | yes | no | **yes** |
-| 5 | Private transfer B to Lens | Ready, `wallet_strk20InvokeTransaction` | **yes** | **yes** | no | yes | no | **yes** |
-| 6 | Lens authorize | Lens account, Lens registry | no | no | no | no | no | no |
-| 7 | Lens revoke | Lens account, Lens registry | no | no | no | no | no | no |
+| 0 | Approve pool for fee + deposit | Ready | no | no | no | yes | no | no |
+| 1 | **First shield, which registers** | Ready, `wallet_strk20InvokeTransaction` | **yes** | **yes** | **yes** | yes | no | **tx 1** |
+| 2 | Register Lens | Lens account, SDK route | **yes** | **yes** | no | no | **yes** | tx 4 |
+| 3 | Private transfer A to Lens | Ready, `wallet_strk20InvokeTransaction` | **yes** | **yes** | no | yes | no | **tx 2** |
+| 4 | Private transfer B to Lens | Ready, `wallet_strk20InvokeTransaction` | **yes** | **yes** | no | yes | no | **tx 3** |
+| 5 | Lens authorize | Lens account, Lens registry | no | no | no | no | no | no |
+| 6 | Lens revoke | Lens account, Lens registry | no | no | no | no | no | no |
 
-Step 3 must come before step 4: a private transfer needs the recipient's public
+Step 2 must come before step 3: a private transfer needs the recipient's public
 viewing key to exist, so Lens has to be registered before Ready can pay it.
 
-Steps 1, 2, 4 and 5 need no prover of ours. **Step 3 remains the only one that
-does**, and it is still blocked.
-
-If Ready bundles registration into step 2 the way the SDK does, step 1
-disappears and one 6 STRK fee comes back. Planning assumes it does not, because
-the cheaper assumption is the one that breaks a budget.
+Steps 1, 3 and 4 need no prover of ours and are the **three qualifying hashes**
+on their own, so the evidence requirement no longer depends on a judge counting
+registration as substantive payment activity. **Step 2 remains the only step
+blocked**, and it is now a fourth transaction rather than one of the minimum
+three.
 
 ---
 
-# Budget
+# Budget, corrected
 
-Pool fee is `get_fee_amount()`, read live: **6 STRK per `apply_actions`,
-unconditional**. Gas is an estimate, based on the 0.037 STRK registry deploy
-invoke and rounded generously upward for the much larger proof-carrying calldata.
+Pool fee is `get_fee_amount()`, read live at block 13,854,850: **6 STRK per
+`apply_actions`, unconditional**. Balances read at the same block.
+
+Ready needs **three** pool operations, not four, because the first shield
+registers:
+
+| Step | Pool fee | Value moved |
+| --- | --- | --- |
+| First shield, which registers | 6 | 3 STRK deposited |
+| Private transfer A to Lens | 6 | 1 STRK, inside the pool |
+| Private transfer B to Lens | 6 | 1 STRK, inside the pool |
+| **Total** | **18** | **3 STRK deposited** |
 
 | | Lens `0x4736...1aca` | Ready `0x04c7...99c8` |
 | --- | --- | --- |
-| Balance | 17.85 STRK | 24.94 STRK |
-| Pool operations | 1 (register) | 3, or 4 if registration is separate |
-| Pool fees | 6 | 18, or 24 |
-| Gas estimate | ≤0.7 (register + authorize + revoke) | ≤2.0 (incl. two approvals) |
-| Deposit amount | none | see below |
-| **Left** | **≈11.1** | **≈4.9, or ≈-1.1** |
+| Balance, live | 17.8488 STRK | 24.9445 STRK |
+| Allowance to pool | 0 | 0 |
+| Registered | no | no |
+| Pool operations | 1 (registration) | 3 |
+| Pool fees | 6 | 18 |
+| Deposit | none | 3 |
+| Gas, estimated | ≤0.8 (register, authorize, revoke) | ≤1.0 (approval plus three calls) |
+| **Remaining** | **≈11.0** | **≈2.9** |
 
-**This is the finding that changes the plan.** If Ready needs its own
-registration transaction, Ready is **short by roughly 1 STRK before any deposit
-at all**, and there is no demo left to fund.
+**Redistribution required: no. External top-up required: no.**
 
-The fix does not need external money. Lens has about 11 STRK of headroom against
-a 6 STRK commitment.
+Both accounts fund their own half. Ready keeps roughly 2.9 STRK of public margin
+after everything, which is thin but real, and the deposit can be reduced to 2
+STRK if the margin needs to be wider.
 
-**Recommended: move 8 STRK from Lens to Ready before anything else.** That
-leaves Lens ≈9.85 against ≈6.7 of spend, and Ready ≈32.9 against ≈26 of fees and
-gas, which leaves 6 to 7 STRK for the deposit under the pessimistic assumption
-and comfortably more if registration turns out to be bundled.
-
-Recommended demo amounts, under the pessimistic assumption:
+Chosen demo amounts:
 
 | | |
 | --- | --- |
-| Deposit | 4 STRK |
-| Private transfer A | 1.5 STRK |
-| Private transfer B | 1.5 STRK |
-| Left shielded in Ready | 1 STRK |
+| Deposit | 3 STRK |
+| Private transfer A | 1 STRK |
+| Private transfer B | 1 STRK |
+| Left shielded | 1 STRK |
 
-Round numbers, readable in a demo, and small enough that nothing meaningful is
-at risk.
-
-**External top-up required: no.** The two accounts hold 42.79 STRK between them
-against roughly 33 STRK of worst-case fees, gas and deposit. Only the
-distribution is wrong, and moving STRK between two accounts we control is a
-transfer, which is the account holder's to run, not this agent's.
-
----
+Small, round, readable, and nothing meaningful at risk. The deposit is the
+smallest amount that still leaves a visible remainder after two transfers, which
+matters because the demo shows a snapshot boundary and a leftover balance makes
+that legible.
 
 # Open questions
 
-1. **Does Ready bundle `SetViewingKey` into the first STRK20 transaction?** The
-   SDK does. The spec says registration is "transparent" and also that
-   `NOT_REGISTERED` is returned. Resolvable for free by registering the Ready
-   account once through `strk20.starknet.io/app` and re-running `/probe`: if
-   `wallet_strk20Balances` stops answering `NOT_REGISTERED`, registration
-   happened and the count of pool operations is known exactly.
-2. **Does registration really need no proof?** See above. If the guidance is
-   right, the Lens blocker disappears entirely.
+1. ~~Does Ready bundle `SetViewingKey` into the first transaction?~~ **Settled:
+   yes**, verified on chain.
+2. ~~Does registration need no proof?~~ **Settled: it needs one.** The wallet
+   supplies it. Lens has no wallet to do that for it.
 3. **Arbitrary recipient at runtime.** API-level support is settled. Runtime
    stays **UNVERIFIED** until a real Ready to Lens transfer succeeds.
+4. **Does Lens derive the same viewing key Ready registered?** Untested, and
+   nothing is built on it. Testable read-only once Ready is registered: compare
+   `get_public_key(READY)` against the public half of the key Lens derives from
+   a Ready signature. Public keys only; the private half is never displayed or
+   logged.

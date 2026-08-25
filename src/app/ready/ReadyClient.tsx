@@ -13,18 +13,19 @@ import { poolReader } from "@/core/read";
 import { formatAmount } from "@/core/view";
 
 /**
- * The Ready side of the demo, for development only.
+ * The Ready side of the demo, development only.
  *
- * Ready owns its viewing key and its private state. This page never tries to
- * derive, hold or reconstruct any of it, and never builds a proof: every write
- * goes through `wallet_strk20InvokeTransaction`, which makes the wallet do the
- * proving with its own proving service. There is deliberately no Lens prover
- * path here.
+ * Ready owns its viewing key and its private state. This page never derives,
+ * holds or reconstructs any of it and never builds a proof: every write goes
+ * through `wallet_strk20InvokeTransaction`, so the wallet proves and submits
+ * with its own proving service. There is deliberately no Lens prover path.
  *
- * There is also deliberately no REGISTER button. Wallet API 0.10.3 defines
- * exactly three STRK20 methods and none of them registers a user, so a register
- * button would be a lie about what the API can do. When the wallet reports
- * NOT_REGISTERED this page says so and points at the official app.
+ * There is deliberately no REGISTER button either, and not because registration
+ * is impossible. Wallet API 0.10.3 defines exactly three STRK20 methods and none
+ * of them registers a user. Registration happens as part of the first shield:
+ * verified on mainnet in tx 0x4f5c1296…, a single `apply_actions` call that
+ * emitted ViewingKeySet, Deposit and EncNoteCreated together. So the shield
+ * button is the registration path, and it is enabled while unregistered.
  *
  * Nothing is submitted on load. Each write needs the exact confirmation phrase
  * typed, then a click, then Ready's own approval.
@@ -34,14 +35,17 @@ const NET = NETWORKS.mainnet;
 const STRK = "0x04718f5a0fc34cc1af16a1cdee98ffb20c31f5cd61d6ab07201858f4287c938d";
 const LENS = "0x47366fff6d7da5f313cf6a379f460c8544db248231a532e533afd588d801aca";
 const DECIMALS = 18;
+const UNIT = 10n ** BigInt(DECIMALS);
 
-/** Values from docs/READY_ROUTE.md. Kept small and round on purpose. */
-const DEPOSIT_STRK = 4n;
-const TRANSFER_STRK = 15n; // tenths, so 1.5 STRK
+/**
+ * Sized against the live balance in docs/READY_ROUTE.md. Three pool operations
+ * cost 18 STRK in protocol fees before anything is shielded, so the deposit has
+ * to fit in what is left with room to spare.
+ */
+const DEPOSIT = 3n * UNIT;
+const TRANSFER = 1n * UNIT;
+const POOL_FEE = 6n * UNIT;
 const CONFIRM = "I understand this spends real STRK";
-
-const toWei = (whole: bigint) => whole * 10n ** BigInt(DECIMALS);
-const toWeiTenths = (tenths: bigint) => (tenths * 10n ** BigInt(DECIMALS)) / 10n;
 
 type Registration = "unknown" | "registered" | "not registered" | "unreadable";
 
@@ -51,10 +55,12 @@ export default function ReadyClient() {
   const [address, setAddress] = useState("");
   const [chainId, setChainId] = useState("");
   const [busy, setBusy] = useState(false);
-  const [publicStrk, setPublicStrk] = useState<string>("reading…");
-  const [privateStrk, setPrivateStrk] = useState<string>("reading…");
+  const [publicWei, setPublicWei] = useState<bigint | null>(null);
+  const [allowanceWei, setAllowanceWei] = useState<bigint | null>(null);
+  const [privateStrk, setPrivateStrk] = useState("reading…");
+  const [privateWei, setPrivateWei] = useState<bigint | null>(null);
   const [registration, setRegistration] = useState<Registration>("unknown");
-  const [poolKey, setPoolKey] = useState<string>("");
+  const [poolKey, setPoolKey] = useState("");
   const [confirm, setConfirm] = useState("");
   const [log, setLog] = useState<string[]>([]);
 
@@ -93,18 +99,25 @@ export default function ReadyClient() {
   }
 
   async function refresh(w: WalletWithStarknetFeatures, who: string) {
-    // Public balance and pool registration come from the chain, not the wallet,
-    // so they are true even if the wallet is being unhelpful.
+    // Registration and public balance come from the chain, not the wallet, so
+    // they stay true even if the wallet is being unhelpful about the rest.
     const provider = providerFor(NET);
+    const u256 = (r: string[]) => BigInt(r[0]) + (BigInt(r[1] ?? "0x0") << 128n);
     try {
-      const r = await provider.callContract({
-        contractAddress: STRK,
-        entrypoint: "balanceOf",
-        calldata: [who],
-      });
-      setPublicStrk(formatAmount(BigInt(r[0]) + (BigInt(r[1] ?? "0x0") << 128n), DECIMALS));
+      setPublicWei(
+        u256(await provider.callContract({ contractAddress: STRK, entrypoint: "balanceOf", calldata: [who] })),
+      );
+      setAllowanceWei(
+        u256(
+          await provider.callContract({
+            contractAddress: STRK,
+            entrypoint: "allowance",
+            calldata: [who, NET.pool],
+          }),
+        ),
+      );
     } catch (e) {
-      setPublicStrk(`unreadable: ${message(e)}`);
+      say(`balance: ${message(e)}`);
     }
 
     try {
@@ -122,30 +135,26 @@ export default function ReadyClient() {
         params: { tokens: [STRK] },
       })) as Array<{ token: string; balance: string }>;
       const entry = balances?.find((b) => BigInt(b.token) === BigInt(STRK));
-      setPrivateStrk(entry ? formatAmount(BigInt(entry.balance), DECIMALS) : "0");
+      const wei = entry ? BigInt(entry.balance) : 0n;
+      setPrivateWei(wei);
+      setPrivateStrk(formatAmount(wei, DECIMALS));
     } catch (e) {
       const c = classify(e);
-      setPrivateStrk(c.verdict === "SUPPORTED" ? "not registered yet" : `unavailable: ${c.detail}`);
+      setPrivateWei(null);
+      setPrivateStrk(c.verdict === "SUPPORTED" ? "none, not registered yet" : `unavailable: ${c.detail}`);
     }
   }
 
   /**
-   * The only write path on this page. It hands the wallet a description of the
-   * actions and lets the wallet prove and submit them. The dapp never sees a
-   * viewing key, never builds a proof and never signs anything.
+   * The only write path. It hands the wallet a description of the actions and
+   * lets the wallet prove and submit them.
    */
   async function invoke(label: string, actions: unknown[]) {
     if (!wallet) return;
-    if (confirm.trim() !== CONFIRM) {
-      say(`${label}: refused, the confirmation phrase does not match.`);
-      return;
-    }
-    if (BigInt(chainId || "0x0") !== BigInt(NET.chainId)) {
-      say(`${label}: refused, the wallet is not on ${NET.label}.`);
-      return;
-    }
+    if (confirm.trim() !== CONFIRM) return say(`${label}: refused, confirmation phrase does not match.`);
+    if (BigInt(chainId || "0x0") !== BigInt(NET.chainId)) return say(`${label}: refused, wallet is not on ${NET.label}.`);
     setBusy(true);
-    say(`${label}: sending to the wallet. Approve or reject it in Ready.`);
+    say(`${label}: sent to the wallet. Approve or reject it in Ready.`);
     try {
       const result = (await api(wallet).request({
         type: "wallet_strk20InvokeTransaction",
@@ -162,17 +171,49 @@ export default function ReadyClient() {
     }
   }
 
-  const armed = confirm.trim() === CONFIRM && !busy && registration === "registered";
+  const onMainnet = !!chainId && BigInt(chainId) === BigInt(NET.chainId);
+  const armed = confirm.trim() === CONFIRM && !busy && onMainnet;
+  const needed = DEPOSIT + POOL_FEE;
+  const canAfford = publicWei !== null && publicWei >= needed;
+  const hasPrivate = privateWei !== null && privateWei > 0n;
+
+  // Shield is the registration path, so it must be available while unregistered.
+  const shieldBlock = !canAfford
+    ? `Needs ${formatAmount(needed, DECIMALS)} STRK (${formatAmount(DEPOSIT, DECIMALS)} deposit plus the ${formatAmount(POOL_FEE, DECIMALS)} pool fee).`
+    : "";
+  const transferBlock =
+    registration !== "registered"
+      ? "No shielded balance yet. Shield first, which also registers this account."
+      : !hasPrivate
+        ? "No shielded balance to send."
+        : "";
+  const unshieldBlock = !hasPrivate ? "No private balance." : "";
+
   const cell: React.CSSProperties = { padding: "0.3rem 1rem 0.3rem 0", color: "#777", whiteSpace: "nowrap", verticalAlign: "top" };
   const btn: React.CSSProperties = { font: "inherit", padding: "0.6rem 1rem", cursor: "pointer" };
+
+  function Action({ label, block, onRun }: { label: string; block: string; onRun?: () => void }) {
+    const enabled = !block && armed && !!onRun;
+    return (
+      <div>
+        <button type="button" style={btn} disabled={!enabled} onClick={onRun}>
+          {label}
+        </button>
+        <span style={{ marginLeft: "0.8rem", color: block ? "#a11" : "#067d38", fontSize: "0.85rem" }}>
+          {block ? "DISABLED" : "AVAILABLE"}
+        </span>
+        {block && <p style={{ margin: "0.2rem 0 0", fontSize: "0.85rem", color: "#777" }}>{block}</p>}
+      </div>
+    );
+  }
 
   return (
     <main style={{ maxWidth: "46rem", margin: "3rem auto", padding: "0 1.5rem", lineHeight: 1.6 }}>
       <h1 style={{ fontSize: "1.4rem", letterSpacing: "-0.01em" }}>Ready execution, development only</h1>
       <p style={{ color: "#666" }}>
-        This page can spend real STRK on Starknet mainnet. Nothing is sent on load. Every write
-        needs the confirmation phrase typed, a click, and then your own approval inside Ready.
-        Ready keeps its viewing key and does its own proving; this page never sees either.
+        This page can spend real STRK on Starknet mainnet. Nothing is sent on load. Every write needs
+        the confirmation phrase typed, a click, and then your own approval inside Ready. Ready keeps
+        its viewing key and does its own proving; this page never sees either.
       </p>
 
       {!wallet && (
@@ -191,18 +232,28 @@ export default function ReadyClient() {
 
       {wallet && (
         <section style={{ marginTop: "2rem" }}>
+          <h2 style={{ fontSize: "1rem" }}>Pre-flight</h2>
           <table style={{ borderCollapse: "collapse", width: "100%" }}>
             <tbody>
               {[
                 ["Wallet", wallet.name],
-                ["Address", address],
-                ["Network", `${chainId} ${BigInt(chainId || "0x0") === BigInt(NET.chainId) ? "" : "  NOT MAINNET"}`],
+                ["Account", address],
+                ["Network", onMainnet ? `${NET.label} ${chainId}` : `${chainId}  NOT MAINNET, writes refused`],
+                ["Token", `STRK ${STRK}`],
+                ["Public STRK", publicWei === null ? "reading…" : formatAmount(publicWei, DECIMALS)],
+                ["Allowance to pool", allowanceWei === null ? "reading…" : formatAmount(allowanceWei, DECIMALS)],
                 ["Pool registration", registration],
                 ["Registered public key", poolKey || "not read"],
-                ["Public STRK", publicStrk],
                 ["Private STRK", privateStrk],
-              ].map(([k, v]) => (
-                <tr key={k}>
+                ["—", "—"],
+                ["Shield amount", `${formatAmount(DEPOSIT, DECIMALS)} STRK`],
+                ["Pool fee", `${formatAmount(POOL_FEE, DECIMALS)} STRK, charged on every pool operation`],
+                ["Estimated gas", "not quotable here; the wallet builds and prices the transaction"],
+                ["Screening", "required, and supplied by Ready. This is the only step that needs it"],
+                ["Ready will request", "an STRK approval for the fee and the deposit, then one apply_actions call"],
+                ["Expected after", `registered = yes, private STRK = ${formatAmount(DEPOSIT, DECIMALS)}, public STRK down by ${formatAmount(needed, DECIMALS)} plus gas`],
+              ].map(([k, v], i) => (
+                <tr key={`${k}-${i}`}>
                   <td style={cell}>{k}</td>
                   <td style={{ padding: "0.3rem 0", wordBreak: "break-all" }}>{v}</td>
                 </tr>
@@ -211,20 +262,17 @@ export default function ReadyClient() {
           </table>
 
           {registration !== "registered" && (
-            <div style={{ marginTop: "1.5rem", padding: "1rem", border: "1px solid #ccc" }}>
-              <strong>This account is not registered with the pool.</strong>
-              <p style={{ margin: "0.5rem 0 0", color: "#666" }}>
-                Wallet API 0.10.3 has no registration method, so no dapp can register you, and
-                there is deliberately no button here that pretends otherwise. Register once at{" "}
-                <a href="https://strk20.starknet.io/app" target="_blank" rel="noreferrer noopener">
-                  strk20.starknet.io/app
-                </a>
-                , then reload this page. The actions below stay disabled until then.
-              </p>
-            </div>
+            <p style={{ marginTop: "1.2rem", padding: "0.9rem", border: "1px solid #ccc", color: "#555" }}>
+              This account is not registered with the pool, and that is expected. Wallet API 0.10.3
+              has no registration method, so there is no register button here. Registration happens
+              inside the first shield: verified on mainnet in tx{" "}
+              <code>0x4f5c129690bf459da7edc625d127ecf4eaad3985df713a986d07424666d9378</code>, one{" "}
+              <code>apply_actions</code> call that emitted ViewingKeySet, Deposit and EncNoteCreated
+              together, for a single pool fee.
+            </p>
           )}
 
-          <div style={{ marginTop: "2rem" }}>
+          <div style={{ marginTop: "1.8rem" }}>
             <label style={{ display: "block", marginBottom: "0.4rem" }}>
               To arm the actions, type: <code>{CONFIRM}</code>
             </label>
@@ -236,48 +284,27 @@ export default function ReadyClient() {
             />
           </div>
 
-          <div style={{ marginTop: "1.5rem", display: "grid", gap: "0.8rem" }}>
-            <button
-              type="button"
-              style={btn}
-              disabled={!armed}
-              onClick={() =>
-                invoke("Shield", [{ type: "deposit", token: STRK, amount: `0x${toWei(DEPOSIT_STRK).toString(16)}` }])
-              }
-            >
-              Shield {DEPOSIT_STRK.toString()} STRK into the pool
-            </button>
-
-            <button
-              type="button"
-              style={btn}
-              disabled={!armed}
-              onClick={() =>
-                invoke("Transfer A", [
-                  { type: "transfer", token: STRK, amount: `0x${toWeiTenths(TRANSFER_STRK).toString(16)}`, recipient: LENS },
+          <div style={{ marginTop: "1.5rem", display: "grid", gap: "1.1rem" }}>
+            <Action
+              label={`Shield ${formatAmount(DEPOSIT, DECIMALS)} STRK  (registers this account)`}
+              block={shieldBlock}
+              onRun={() => invoke("Shield", [{ type: "deposit", token: STRK, amount: `0x${DEPOSIT.toString(16)}` }])}
+            />
+            <Action
+              label={`Private transfer ${formatAmount(TRANSFER, DECIMALS)} STRK to Lens`}
+              block={transferBlock}
+              onRun={() =>
+                invoke("Transfer", [
+                  { type: "transfer", token: STRK, amount: `0x${TRANSFER.toString(16)}`, recipient: LENS },
                 ])
               }
-            >
-              Private transfer 1.5 STRK to the Lens account
-            </button>
-
-            <button
-              type="button"
-              style={btn}
-              disabled={!armed}
-              onClick={() =>
-                invoke("Transfer B", [
-                  { type: "transfer", token: STRK, amount: `0x${toWeiTenths(TRANSFER_STRK).toString(16)}`, recipient: LENS },
-                ])
-              }
-            >
-              Private transfer 1.5 STRK to the Lens account, again
-            </button>
+            />
+            <Action label="Unshield" block={unshieldBlock || "Not part of this demo."} />
           </div>
 
           <p style={{ marginTop: "1rem", fontSize: "0.85rem", color: "#777" }}>
-            The transfers will fail until the Lens account is registered, because a private
-            transfer needs the recipient&apos;s public viewing key to exist. Recipient:{" "}
+            Transfers also need the Lens account registered, because a private transfer needs the
+            recipient&apos;s public viewing key to exist. Recipient:{" "}
             <code style={{ wordBreak: "break-all" }}>{LENS}</code>
           </p>
 
