@@ -18,7 +18,9 @@ mainnet or on Sepolia.
 This is blocked by a dependency outside the repository. See
 [The proving blocker](#the-proving-blocker) below for the evidence trail.
 
-Required by the sprint: three mainnet transactions run against the live pool.
+Required by the sprint, quoting its README: "Three mainnet transaction hashes in
+`strk20.json`, each proving a real call against the STRK20 pool." Registry
+declare, registry deploy, and Lens authorize and revoke do not count.
 Current count: **0 of 3**. The Lens registry deployment is real mainnet
 activity but is not pool activity, and is counted separately below.
 
@@ -135,187 +137,237 @@ Declare plus deploy cost 4.0465 STRK, leaving 17.8488 STRK.
 
 # The proving blocker
 
-The single dependency standing between this repository and every item above.
+Reduced during this phase from "the SDK route is blocked" to something much
+narrower and much better understood.
 
-## What is needed
+## How a pool write actually works
 
-A STRK20 proving service endpoint. Every write to the pool, including the
-registration that would make an account readable by Lens, goes through
-`.execute({ provingBlockId })`, which requires a configured proving provider.
+Read from `packages/privacy/src/privacy.cairo` at `PRIVACY-0.14.3-RC.2`. A write
+is two transactions, not one.
 
-## Where it was looked for
+**Phase 1, off chain.** A virtual Invoke V3 is built whose sender is the pool
+itself. Its calldata is `(user_addr, user_private_key, client_actions)`.
+`__validate__` requires the caller to be the OS, a zero tip, and every
+`max_price_per_unit` to be zero, so it is a zero-fee transaction that never
+reaches a sequencer. `__execute__` compiles the client actions into server
+actions, checks the user's signature over the call set, and messages the result.
+That execution is what the prover proves.
 
-| Source | Result |
+**Phase 2, on chain.** A real transaction calls
+`apply_actions(server_actions, screening)` carrying the proof facts.
+
+The order inside `apply_actions` is fixed, and it explains the
+`EMPTY_PROOF_FACTS` seen earlier: `assert_not_paused`, then `validate_proof`,
+then `collect_fee`, then the actions, and only then screening.
+
+## `user_private_key` is the viewing key, and it goes to the prover
+
+`derive_public_key` is `GEN_P().mul(private_key).x()`, and `is_canonical_key` is
+`key < ORDER / 2`. Those are exactly the STARK-curve generator multiplication
+and the canonical fold that Lens's own `deriveViewingKeyFromPrivateKey`
+performs, so `user_private_key` in the calldata above **is the viewing key**.
+
+The SDK confirms it from the other side. `private-transfers.ts` reads
+`viewingKeyProvider.getViewingKey()` and passes it into
+`proofInvocationFactory.create({ ...account, viewingKey }, ...)`, and that
+invocation is what `provingProvider.prove()` sends to the proving service.
+
+**So the SDK route hands the viewing key to whoever runs the prover.** The SDK
+ships an OHTTP client, which hides *who* is asking, not *what* is sent.
+
+This is a design fact, not a criticism: the intended operator of a prover is the
+wallet that already holds the keys, which is why the Wallet API route exists.
+But it does mean that for Lens, whose premise is that a viewing key is never
+handed over, a third-party hosted prover is not a neutral convenience.
+Self-hosting is the option consistent with what Lens claims.
+
+## Screening, settled from source
+
+Retracting the earlier claim in both directions: it is not required everywhere,
+and it is not optional where it does apply. The on-chain rule is four lines
+(`privacy.cairo`, `apply_actions`):
+
+```cairo
+if let Some(depositor) = self._apply_actions(:actions) {
+    // A regular-pool deposit must carry a screening attestation.
+    self._verify_screening(screening.expect(errors::SCREENING_REQUIRED), depositor);
+} else {
+    // No deposit: there must be nothing to screen.
+    assert(screening.is_none(), errors::UNEXPECTED_SCREENING);
+}
+```
+
+`_apply_actions` returns `Some(depositor)` only when the action list contains a
+`ServerAction::TransferFrom`, the action that pulls tokens in from a public
+address. Every other action returns `None`, and for those an attestation must be
+**absent** or the call reverts with `UNEXPECTED_SCREENING`.
+
+The off-chain sidecar agrees. In
+`proof-interceptor/src/screening-interceptor.ts`, `getScreenedAddresses`
+"returns `[]` for non-pool transactions and for pool transactions that carry no
+Deposit action (e.g., Withdraw-only)", and `hasDepositAction` checks
+`action.activeVariant() === "Deposit"`. The compatibility matrix calls the
+interceptor an "optional deposit-screening sidecar to the transaction prover;
+deploy only for screening-enabled pools."
+
+| Action | Attestation | Source |
+| --- | --- | --- |
+| REGISTER (`SetViewingKey`) | must be absent | no `TransferFrom`, so the `else` branch applies |
+| DEPOSIT | **required** | `TransferFrom` sets the depositor |
+| TRANSFER (intra-pool) | must be absent | `WriteOnce` and `Append` only |
+| WITHDRAW | must be absent | `TransferTo`, and named in the interceptor comment |
+
+The sprint's own `MAINNET-DAY-0.md` says the same in prose: "A compliance
+provider screens the depositing address... running your own prover does not
+bypass it."
+
+**Consequence:** registration and private transfers need a prover and no
+screener. Only a deposit needs a screener, and the Ready route supplies one.
+
+## The live pool does not match the published matrix
+
+| | Class hash |
 | --- | --- |
-| `@starkware-libs/starknet-privacy` monorepo, `demo/.env.mainnet.example` | `VITE_PROVING_SERVICE_URL=TODO_MAINNET_PROVER_URL` |
-| Same repo, `sdk/README.md` | Takes `provingProvider` as a parameter, publishes no endpoint |
-| `strk20-by-example.org/sdk/proving-config` | `process.env.PROVING_SERVICE_URL!`, no value published |
-| `starkware-libs/privacy-bridge`, StarkWare's own shipping product | `VITE_PROVER_URL_${N}` from env, test placeholder `https://prover.example.com` |
-| `@avnu/avnu-sdk` 4.2.0 | Ships no prover. `createStrk20WalletProver` delegates to the wallet |
-| Repository's own `strk20-privacy-integration` skill | Names hosted and self-hosted as the two options, publishes no endpoint |
+| Live mainnet pool `0x0403...812a` | `0x67dddd89d80fedadc06b6f160798f94800a4a70164e5a24301cd0d6076b554d` |
+| Published matrix, `PRIVACY-0.14.3-RC.0` | `0x52107fadffab71bdcbb6b2ccb68ba3e1b5558d94036538053e159d3076ad633` |
 
-No official source available locally publishes a proving endpoint for either
-network. It appears to be provisioned per team, or shared in the sprint's
-support channel.
+Read on two RPCs, and they agree. The pool address itself is right: it is the
+one the sprint's `MAINNET-DAY-0.md` names.
 
-## Why the wallet route does not substitute
+The mismatch is not resolvable from published material, because
+`demo/.env.mainnet.example` still carries `TODO_MAINNET_POOL_ADDRESS` and
+`TODO_MAINNET_POOL_CLASS_HASH`. The repository has never published the mainnet
+deployment. `packages/privacy/src/privacy.cairo` differs between RC.0, RC.2 and
+RC.5, so the matrix hash belongs to a build that is not what mainnet runs.
 
-The Wallet API route can create genuine mainnet pool activity, because Ready
-performs the proving. The AVNU SDK states the mechanism plainly:
+What is known about the live class: `get_version` is `2.0`, `apply_actions`
+takes `Option<ScreeningAttestation>`, `get_screener_public_key` is set, and
+`get_proof_validity_blocks` is 450. That is a screening-enabled pool on the
+0.14.3 line, not a pre-screening build.
 
-> The wallet keeps the keys and notes and generates the proof
+**This is why RC.2 is the candidate rather than RC.5.** All components in a
+matrix row are tested together, and RC.2 is the row that is published. It is
+also why self-hosting cannot be called proven: the prover re-executes whatever
+class is on chain, so a class outside the tested row is an untested combination.
 
-That is exactly why it does not help Lens. A relationship created through a
-wallet belongs to **that wallet's viewing key**. Lens derives its own viewing
-key from a signature, so it cannot read notes registered under a different key,
-and the Wallet API exposes no method to obtain one. The STRK20 docs are explicit
-that a dapp must never receive a user's viewing key.
+## Compatibility matrix, recorded verbatim
 
-So the two routes fail for opposite reasons:
-
-- **Wallet route:** can transact, cannot be read by Lens.
-- **SDK route:** can be read by Lens, cannot transact without a prover.
-
-## Screening: optional in the ABI, and not the first guard
-
-Read from the live mainnet pool:
-
-| Call | Value |
+| Component | Pinned revision |
 | --- | --- |
-| `get_version` | `2.0` |
-| `get_screener_public_key` | set, non-zero (`0x501cc452…`) |
-| `get_fee_amount` | `6.0 STRK` per pool operation |
+| Transaction Prover | `ghcr.io/starkware-libs/starknet-privacy/transaction-prover:PRIVACY-0.14.3-RC.2` |
+| Proof Interceptor | `ghcr.io/starkware-libs/starknet-privacy/proof-interceptor:PRIVACY-0.14.3-RC.2` (optional, deposits only) |
+| Discovery Service | `ghcr.io/starkware-libs/starknet-privacy/discovery-service:PRIVACY-0.14.3-RC.2` |
+| Pathfinder | `eqlabs/pathfinder:v0.22.7`, with `PATHFINDER_STORAGE_STATE_TRIES=10000` |
+| SDK | `PRIVACY-0.14.3-RC.2` |
+| Privacy Pool contract | `PRIVACY-0.14.3-RC.0` |
 
-An earlier revision of this document concluded that screening was mandatory on
-every route and that self-hosting a prover was therefore pointless. **That
-conclusion was wrong, and is retracted.** The live ABI says otherwise:
+All three images answer an anonymous ghcr manifest request, so none of them
+needs credentials. They publish `linux/amd64` only.
 
-```
-apply_actions(
-  actions:   Span<privacy::actions::ServerAction>,
-  screening: Option<privacy::snip12::ScreeningAttestation>,
-)
-```
+## Self-hosting: specified, and out of reach on this machine
 
-The attestation is an **`Option`**, not a required argument.
+From the prover crate's own README:
 
-Probed read-only against the live mainnet pool, passing `None` for screening
-and an empty action list:
-
-| Calldata | Revert |
+| Requirement | Value |
 | --- | --- |
-| `["0x0", "0x1"]` (empty actions, screening `None`) | `EMPTY_PROOF_FACTS` |
-| `["0x0", "0x0", "0x0", "0x0"]` (screening `Some`, short) | `Failed to deserialize param #2` |
+| Recommended machine | `c4d-highcpu-48` |
+| vCPU | 48 |
+| Memory | 96 GB |
+| Architecture | amd64 |
+| `RPC_URL` | a Starknet node speaking **JSON-RPC v0.10** |
+| Port | 3000, JSON-RPC 2.0 on `/` |
+| Health check | `starknet_specVersion` returns `0.10.0` |
+| Accepts | Invoke V3 only, finalized blocks only, one transaction per request |
 
-`None` deserializes cleanly and the call proceeds until it fails on the
-**proof**, not on screening. So the pool does not reject an unscreened call out
-of hand. Whatever screening rule exists is applied after proof validation and,
-on the evidence available, conditionally on the action.
+Two of those are better news than expected. The prover talks to an ordinary
+`RPC_URL`, and both Cartridge and Lava already answer `starknet_specVersion`
+with **0.10.2** on mainnet, so a self-run Pathfinder is not obviously required.
+And the interceptor is not needed at all for registration, which carries no
+deposit.
 
-What this does and does not establish:
+The blocker is the machine. This machine has **4 vCPU and 15.9 GB of RAM**
+against a recommendation of 48 and 96. That is not a tuning gap, and no flag
+closes it. Docker is installed, so the constraint really is the hardware.
 
-- **Established:** screening is not an unconditional precondition, and the
-  first and binding guard is proof validity.
-- **Not established:** whether a `Deposit` action specifically requires
-  `Some(attestation)`. That check sits behind proof validation, so it cannot be
-  reached by a read-only probe.
-- **Not established:** whether `SetViewingKey` (registration) or an
-  intra-pool transfer requires one. Neither moves value in from outside, which
-  is what screening exists to police, and nothing in the ABI or the reachable
-  revert path requires an attestation for them.
+Nothing has been rented or deployed.
 
-Self-hosting is therefore **still open**, not rejected. The prover crate is
-open source at `starkware-libs/sequencer/crates/starknet_transaction_prover`.
-The question it turns on is whether a self-produced proof satisfies the pool's
-fact registry for pool version 2.0, which is the next thing to test, not
-whether an attestation can be obtained.
+## What is left, stated precisely
 
-Also worth recording for budgeting: at 6 STRK per pool operation, three
-live-pool transactions cost **18 STRK in pool fees alone**, before gas. The
-deployer holds 17.85 STRK, so funding is close but not yet sufficient for the
-full three.
+Exactly **one** transaction needs a prover Lens controls: Lens's own
+registration. Its viewing key has to be the one Lens derives, and
+`SetViewingKey` is write-once, so it cannot be delegated to a wallet that would
+register its own key instead.
 
-## Where the proof is actually checked
+Everything else can go through Ready, which reaches its own proving service:
+the screened deposit and both private transfers.
 
-The pool is itself an **account contract**: its ABI exposes `__execute__`, and
-`apply_actions` is reached as a self-call. `EMPTY_PROOF_FACTS` is raised by
-`apply_actions` reading facts that the validation phase was supposed to
-establish, which places proof verification in the transaction's `__validate__`
-step rather than in any callable entry point.
+Unblocking therefore needs one of:
 
-Consequences for a self-hosted prover, which is the open question:
+1. The hosted mainnet proving URL. The sprint's `MAINNET-DAY-0.md` still says
+   "The mainnet proving service URL is not published here yet," and names
+   opening an issue as the route to request it.
+2. A machine that can run `transaction-prover:PRIVACY-0.14.3-RC.2` for a single
+   proof, pointed at a public v0.10 RPC. Specified above, not provisioned.
 
-- There is no verifier or fact-registry address exposed as a view, so the
-  acceptance rule cannot be read off the contract. It has to be matched against
-  what the validation phase expects.
-- `get_proof_validity_blocks` returns `0x1c2`, **450 blocks**. That is the
-  window a proof stays valid in, and it is what `provingBlockId` has to fall
-  inside. It is generous enough that proving latency is not a design problem.
-- `is_paused` is `false` and `get_upgrade_delay` is `0`, so nothing about the
-  pool's current state blocks writes.
+Self-hosting is **not** rejected, and screening is **not** the obstacle for
+registration.
 
-Other live values read at the same time, recorded because they are cheap to
-verify and easy to get wrong: `get_fee_amount` `0x53444835ec580000` (exactly
-6 STRK), `get_fee_collector`
-`0x0d79041634625e5288296fbc648088788710ba44903a3a49468a66567749e77`,
-`get_auditor_public_key` set and non-zero.
+## Discovery, corrected
 
-## A useful discovery: `compile_and_panic`
+An earlier note here said the indexer is not a blocker. That is still true for
+Lens: `read.ts` and `channels.ts` walk the pool over plain RPC and the app
+depends on no indexer.
 
-The pool exposes:
+It is **not** true for SDK-based transaction construction. Per the sprint's own
+doc, as of SDK `0.14.3-rc.5` `ContractDiscoveryProvider` is not re-exported from
+the package entry and the `exports` map has no `./internal/*` subpath, so it
+cannot be deep-imported either. On the SDK route, discovery means a hosted
+indexer today.
 
-```
-compile_and_panic(user_addr, user_private_key, client_actions: Span<ClientAction>)
-```
+For a registration-only call this may not bite: the compiler discovers
+recipients only when a channel is being opened, and a bare `SetViewingKey` opens
+none. That is a reading of `sdk/src/internal/compiler.ts`, not a tested result,
+and it is recorded as an assumption rather than a finding.
 
-It compiles client actions into server actions and panics with the result, so
-the compilation step can be inspected read-only, with no prover and no
-transaction. It takes a private key, so it is only ever safe with a throwaway
-account, and no key belonging to this project has been or will be passed to it.
-It is recorded here because it is the cheapest way to validate the action
-encoding ahead of a real write.
+## The Ready half
 
-## The indexer is not a blocker
+`wallet_rpc.json` at spec `v0.10.3` defines three STRK20 methods:
+`wallet_strk20InvokeTransaction`, `wallet_strk20PrepareInvoke` and
+`wallet_strk20Balances`.
 
-Removed from this list after checking. The SDK ships
-`ContractDiscoveryProvider`, which reads the pool directly over RPC with no
-hosted indexer, and the factory documents `new ContractDiscoveryProvider(pool)`.
+`STRK20_TRANSFER_ACTION.recipient` is documented as "The Starknet address of the
+registered recipient inside the privacy pool", typed as a plain `ADDRESS`. There
+is no constraint that it be wallet-owned, a wallet contact, or under wallet
+custody. **At spec level an arbitrary registered recipient is supported**, and
+being registered is the only requirement, which is precisely what Lens's
+registration would provide.
 
-Lens does not need it either way: `read.ts` and `channels.ts` already walk the
-pool over plain RPC, which is the same approach. No indexer dependency exists or
-is planned.
+What the spec cannot answer is whether Ready implements those methods for a
+dapp. There is no published list of STRK20-capable wallets, and the sprint's own
+guidance is to probe rather than assume, using the read-only
+`wallet_strk20Balances`. [scripts/ready-probe.html](../scripts/ready-probe.html)
+does exactly that: open it in the browser that has the wallet and it reports,
+per wallet, whether the STRK20 methods answer. It signs nothing and submits
+nothing.
 
-## What would unblock it
+## Budget, from the live contract
 
-Any one of:
+`collect_fee()` runs unconditionally inside `apply_actions`, before the actions
+and before screening, and moves `get_fee_amount()` in STRK from
+`get_caller_address()` to the fee collector. Live value: **6 STRK per pool
+operation, every action type, no exceptions.** Because it is a `transferFrom`,
+the submitting account must approve the pool for it first, which is an ordinary
+ERC-20 call and not itself a pool operation.
 
-1. A proving service URL for mainnet.
-2. A self-hosted prover whose output satisfies the pool's fact registry for
-   pool version 2.0. Open, per the section above, and the cheapest thing left
-   to test.
-3. A Wallet API method letting a dapp use the wallet as a proving backend for
-   an SDK-built transaction, which does not exist.
+| Actor | Holds | Planned pool operations | Pool fees | Headroom |
+| --- | --- | --- | --- | --- |
+| Lens `0x4736...1aca` | 17.85 STRK | registration | 6 STRK | 11.85 STRK, plus gas and the two registry writes |
+| Ready `0x04c7...99c8` | 24.94 STRK | deposit, transfer A, transfer B | 18 STRK | 6.94 STRK, which also has to cover gas and the deposited amount |
 
-The fallback still worth pursuing, unchanged: Lens registration, then a Ready
-screened deposit, then a Ready private transfer into a Lens-registered address,
-then Lens inbound ECDH recovery. It only needs the registration write to
-succeed, which is the smallest write the pool accepts and the one least likely
-to need an attestation.
-
-Exact question for the sprint channel:
-
-> I am building for the STRK20 Private Sprint and need to create genuine
-> mainnet private-transfer activity using the Privacy SDK with my own
-> `viewingKeyProvider`. I can use `ContractDiscoveryProvider` directly against
-> the pool, so discovery is not a blocker. Two questions. What is the currently
-> supported hosted proving-service URL and configuration for the mainnet pool?
-> And since `get_screener_public_key` is set on the mainnet pool and
-> `apply_actions` takes a `ScreeningAttestation`, how does a builder obtain a
-> screening attestation for a deposit? If self-hosted provers are allowed, which
-> prover version matches pool version 2.0, and does self-hosting still require
-> the hosted screening service?
-
----
+Neither account holds USDC, so a STRK-denominated demo is the practical choice.
+No top-up is required for the four planned operations, though the deposited
+amount has to stay small, on the order of 2 to 4 STRK, to fit inside Ready's
+remaining headroom.
 
 # Ready to run the moment it unblocks
 
@@ -324,6 +376,7 @@ Exact question for the sprint channel:
 | Verify a live relationship | `npx tsx scripts/verify-relationship.ts <holder> <counterparty> --mainnet` | written, exercised against live mainnet reads |
 | Deploy the registry | `npx tsx scripts/deploy-registry.ts --mainnet` | **done**, see above |
 | Full disclosure lifecycle | `npx tsx scripts/e2e-sepolia.ts` | passing on Sepolia against the live contract |
+| Probe the wallet for STRK20 | open `scripts/ready-probe.html` in the browser holding the wallet | written, read-only, needs a human at the browser |
 
 `verify-relationship.ts` was run against mainnet during this phase. It reads the
 real pool and reports correctly that neither demo address is registered, which is
@@ -340,6 +393,7 @@ neither is a personal wallet.
 | Role | Address | Network |
 | --- | --- | --- |
 | Lens deployer | `0x47366fff6d7da5f313cf6a379f460c8544db248231a532e533afd588d801aca` | mainnet, deployed, 17.85 STRK |
+| Counterparty, Ready side | `0x04c7082c068f3d78d0637c867041e322a33b03ed70606ad4bd8e5771a13f99c8` | mainnet, deployed, 24.94 STRK |
 | Sepolia deployer | `0x56d8c42a83dc976ea0bf367639c0b5ce4f42ea262ae8d1a046f710e13659124` | sepolia, funded by faucet |
 
 Secrets live only in `.env.local`, which is gitignored and confirmed ignored.

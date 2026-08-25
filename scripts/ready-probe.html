@@ -1,0 +1,94 @@
+<!doctype html>
+<meta charset="utf-8" />
+<title>STRK20 wallet capability probe</title>
+<style>
+  :root { color-scheme: light dark; }
+  body { font: 15px/1.6 ui-sans-serif, system-ui, sans-serif; max-width: 46rem; margin: 3rem auto; padding: 0 1.5rem; }
+  h1 { font-size: 1.3rem; letter-spacing: -0.01em; }
+  p { color: #555; }
+  button { font: inherit; padding: 0.55rem 1rem; cursor: pointer; }
+  pre { background: #1113; padding: 1rem; border-radius: 6px; overflow-x: auto; white-space: pre-wrap; word-break: break-all; }
+  .ok { color: #067d38; font-weight: 600; }
+  .no { color: #a11; font-weight: 600; }
+</style>
+
+<h1>STRK20 wallet capability probe</h1>
+<p>
+  Open this file in the browser that has Ready installed, pick the wallet, and read the result.
+  Every call here is read-only: it asks the wallet what it can do and reads shielded balances.
+  Nothing is signed, nothing is submitted, no money moves.
+</p>
+
+<p><button id="run">Probe installed wallets</button></p>
+<pre id="out">Not run yet.</pre>
+
+<script type="module">
+  // Mainnet STRK and USDC, used only as the token list for the read-only balance call.
+  const TOKENS = [
+    "0x04718f5a0fc34cc1af16a1cdee98ffb20c31f5cd61d6ab07201858f4287c938d",
+    "0x053c91253bc9682c04929ca02ed00b3e423f6710d2ee7e0d5ebb06f3ecf368a8",
+  ];
+
+  const out = document.getElementById("out");
+  const lines = [];
+  const say = (s) => { lines.push(s); out.textContent = lines.join("\n"); };
+
+  function injectedWallets() {
+    const found = new Map();
+    for (const key of Object.keys(window)) {
+      if (!key.startsWith("starknet")) continue;
+      const w = window[key];
+      if (w && typeof w === "object" && typeof w.request === "function") found.set(key, w);
+    }
+    return found;
+  }
+
+  document.getElementById("run").addEventListener("click", async () => {
+    lines.length = 0;
+    const wallets = injectedWallets();
+    if (wallets.size === 0) {
+      say("No injected Starknet wallet found on window.");
+      say("Install or unlock the wallet, then reload this page.");
+      return;
+    }
+    say(`Found ${wallets.size} injected wallet object(s): ${[...wallets.keys()].join(", ")}\n`);
+
+    for (const [key, wallet] of wallets) {
+      say(`=== ${key}  (${wallet.name ?? "unnamed"}, version ${wallet.version ?? "?"})`);
+
+      try {
+        const version = await wallet.request({ type: "wallet_supportedSpecs" });
+        say(`  wallet_supportedSpecs        ${JSON.stringify(version)}`);
+      } catch (e) {
+        say(`  wallet_supportedSpecs        not answered (${short(e)})`);
+      }
+
+      // Read-only, and the probe the sprint's own Day 0 doc recommends.
+      try {
+        const balances = await wallet.request({
+          type: "wallet_strk20Balances",
+          params: { tokens: TOKENS },
+        });
+        say(`  wallet_strk20Balances        ANSWERED`);
+        say(`    ${JSON.stringify(balances)}`);
+        say(`  STRK20 SUPPORT               YES`);
+      } catch (e) {
+        say(`  wallet_strk20Balances        refused (${short(e)})`);
+        say(`  STRK20 SUPPORT               NO, or the wallet is locked / not connected`);
+      }
+
+      say("");
+    }
+
+    say("What the answers mean:");
+    say("  wallet_strk20Balances answering at all is the sprint's own capability test.");
+    say("  A wallet that answers implements the STRK20 methods, which is what the");
+    say("  deposit and the private transfer to an arbitrary registered recipient need.");
+    say("  A wallet that refuses has told you to show a different path.");
+  });
+
+  function short(e) {
+    const m = (e && (e.message || e.toString())) || "unknown";
+    return String(m).slice(0, 120);
+  }
+</script>
