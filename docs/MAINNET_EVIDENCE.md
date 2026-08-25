@@ -19,33 +19,54 @@ This is blocked by a dependency outside the repository. See
 [The proving blocker](#the-proving-blocker) below for the evidence trail.
 
 Required by the sprint: three mainnet transactions run against the live pool.
-Current count: **0 of 3**.
+Current count: **0 of 3**. The Lens registry deployment is real mainnet
+activity but is not pool activity, and is counted separately below.
 
 ---
 
 # LENS REGISTRY
 
-**Not deployed on mainnet.**
+**Deployed on Starknet mainnet.**
 
 | Item | Value |
 | --- | --- |
-| Class hash | `0x767bfcbdf3fcebc0836cd1d050aa4daed9ec1d10e152f59df222e708ea2e616` (built, declared on Sepolia only) |
-| Mainnet registry | none |
-| Mainnet declare | none |
-| Mainnet deploy | none |
-| Mainnet authorization | none |
-| Mainnet revocation | none |
+| Contract | `0x7e14bc65e5f759da2a981843c485a948dc6e15548fe0ba51e3ca805ca75fb01` |
+| Class hash | `0x767bfcbdf3fcebc0836cd1d050aa4daed9ec1d10e152f59df222e708ea2e616` |
+| Declare | `0x6124e178200e715c9c0e6c2c6ed08bf1ea3a46a4b8b11b96e595abe0ff6f12d` (block 13,815,976, 4.0095 STRK) |
+| Deploy | `0x4b41314ed39bc6d41b6791e4550c804e40da8e00b26c8cc8a36fa4b17e1d9d6` (block 13,815,987, 0.0370 STRK) |
+| Deployment block | 13,815,987 |
+| Mainnet authorization | none yet |
+| Mainnet revocation | none yet |
 | Deployer | `0x47366fff6d7da5f313cf6a379f460c8544db248231a532e533afd588d801aca` |
-| Deployer STRK | 0.0000 |
-| Deployer ETH | 0.001027 |
+| Deployer STRK after | 17.8488 |
 
-Blocked by fee-token mismatch, not by an empty account. See
-[Funding reconciliation](#funding-reconciliation). The deployment path is written, rehearsed end to end
-on Sepolia, and captures its own deployment block for the event-scan floor. See
-[docs/DEV_EVIDENCE.md](./DEV_EVIDENCE.md) for the Sepolia rehearsal, which is
-development evidence and is deliberately not listed here.
+The class hash was recomputed from a fresh `scarb build` immediately before
+declaring and is byte-identical to the class audited on Sepolia, so the two
+networks run the same reviewed code.
+
+Verified independently after deployment on three RPCs (Cartridge, Lava,
+Alchemy), all three returning the same class hash at the address:
+
+| Read | Result |
+| --- | --- |
+| `status(unknown commitment)` | `Unknown` |
+| `is_authorized(unknown commitment)` | `false` |
+| `get_authorization(unknown commitment)` | no record |
+| `listHolderAuthorizations` from block 13,815,987 | 0 entries |
+
+An unknown commitment reads as unauthorized rather than erroring, which is the
+fail-closed behaviour the proof page depends on.
+
+No authorization has been written on mainnet. Writing one would mean signing a
+disclosure that describes no real payment, so the registry stays empty until a
+genuine relationship exists.
+
+The address and the deployment block are checked into
+[src/utils/networks.ts](../src/utils/networks.ts). The block matters: without it
+`listHolderAuthorizations` would scan mainnet from genesis.
 
 ---
+
 
 # REAL DISCLOSURE
 
@@ -58,40 +79,30 @@ walletless proof page, and the registry lifecycle.
 
 ---
 
-# Funding reconciliation
+# Funding reconciliation, resolved
 
-The account **was** funded, with **ETH rather than STRK**.
+The account was originally funded with **ETH rather than STRK**. starknet.js
+builds V3 transactions only, and V3 resource bounds are denominated in FRI,
+which is STRK, so there is no ETH fee path and the balance was unusable.
 
-Verified at mainnet block ~13,812,010 by direct `balanceOf` on three
-independent RPCs (Cartridge, Lava, Alchemy), all agreeing:
+A paymaster could not rescue it either: the AVNU paymaster's transaction union
+is `Deploy | Invoke | DeployAndInvoke`, so **a paymaster cannot carry a
+DECLARE**, which is exactly what publishing the registry class needs.
 
-| Token | Balance |
-| --- | --- |
-| STRK | 0.000000 |
-| ETH | 0.001027 |
+Resolved by the account holder, in this order:
 
-The account is still undeployed (`Contract not found`), which is expected for a
-counterfactual address that has never sent a transaction.
+1. The counterfactual OpenZeppelin account was deployed on mainnet
+   (`0x335b7e3776454e9960517a97fbde222133a5ab0ea70d25fde9629172a706062`,
+   block 13,814,304), funded with a small amount of STRK for that one fee.
+2. `scripts/send-recovery-eth.ts` moved 0.0009 ETH out to a wallet that could
+   trade it. The script hard-codes source, destination and amount, refuses on
+   the wrong chain or a mismatched address, and defaults to a dry run.
+3. The holder swapped that ETH for STRK and returned it. This agent does not
+   execute trades or transfers, so the swap and the `--send` step were run by
+   the account holder.
 
-**Why ETH cannot be used directly.** starknet.js builds V3 transactions only
-(`transactionVersion: ETransactionVersion.V3`), and V3 resource bounds are
-denominated in FRI, which is STRK. There is no ETH fee path.
-
-**Why a paymaster does not fully solve it.** The AVNU paymaster built into
-starknet.js (`https://starknet.paymaster.avnu.fi`) answers without an API key
-and does accept ETH as a gas token, confirmed against its live
-`paymaster_getSupportedTokens`. But its transaction union is
-`Deploy | Invoke | DeployAndInvoke`: **a paymaster cannot carry a DECLARE**, and
-declaring the registry class is exactly what the deployment needs. So the
-paymaster could deploy the account and run `authorize` and `revoke`, and cannot
-publish the contract class.
-
-**What would resolve it**, cheapest first:
-
-1. Send roughly **50 STRK** (about a dollar) to the deployer. One step.
-2. Swap the existing ETH to STRK. Enough value is present, but executing a swap
-   is a financial trade and is not something this agent performs; a human can do
-   it in a wallet in under a minute.
+Balance before the deployment, agreeing across three RPCs: **21.8953 STRK**.
+Declare plus deploy cost 4.0465 STRK, leaving 17.8488 STRK.
 
 # The proving blocker
 
@@ -136,9 +147,9 @@ So the two routes fail for opposite reasons:
 - **Wallet route:** can transact, cannot be read by Lens.
 - **SDK route:** can be read by Lens, cannot transact without a prover.
 
-## Screening is a second, separate blocker for deposits
+## Screening: optional in the ABI, and not the first guard
 
-Read from the live mainnet pool during this phase:
+Read from the live mainnet pool:
 
 | Call | Value |
 | --- | --- |
@@ -146,18 +157,69 @@ Read from the live mainnet pool during this phase:
 | `get_screener_public_key` | set, non-zero (`0x501cc452…`) |
 | `get_fee_amount` | `6.0 STRK` per pool operation |
 
-`apply_actions` takes a `ScreeningAttestation`, and the docs are explicit that
-screening applies on every route: *"a self-hosted prover meets the same
-deposit-screening requirement as hosted services."* The attestation is signed by
-the screener whose public key is set above, which no builder can produce.
+An earlier revision of this document concluded that screening was mandatory on
+every route and that self-hosting a prover was therefore pointless. **That
+conclusion was wrong, and is retracted.** The live ABI says otherwise:
 
-So a self-hosted prover does **not** unblock this project. Without a screened
-deposit there is nothing in the pool to transfer, and the deposit is the step
-that needs the attestation. The hosted service is required for screening, not
-merely for convenience.
+```
+apply_actions(
+  actions:   Span<privacy::actions::ServerAction>,
+  screening: Option<privacy::snip12::ScreeningAttestation>,
+)
+```
+
+The attestation is an **`Option`**, not a required argument.
+
+Probed read-only against the live mainnet pool, passing `None` for screening
+and an empty action list:
+
+| Calldata | Revert |
+| --- | --- |
+| `["0x0", "0x1"]` (empty actions, screening `None`) | `EMPTY_PROOF_FACTS` |
+| `["0x0", "0x0", "0x0", "0x0"]` (screening `Some`, short) | `Failed to deserialize param #2` |
+
+`None` deserializes cleanly and the call proceeds until it fails on the
+**proof**, not on screening. So the pool does not reject an unscreened call out
+of hand. Whatever screening rule exists is applied after proof validation and,
+on the evidence available, conditionally on the action.
+
+What this does and does not establish:
+
+- **Established:** screening is not an unconditional precondition, and the
+  first and binding guard is proof validity.
+- **Not established:** whether a `Deposit` action specifically requires
+  `Some(attestation)`. That check sits behind proof validation, so it cannot be
+  reached by a read-only probe.
+- **Not established:** whether `SetViewingKey` (registration) or an
+  intra-pool transfer requires one. Neither moves value in from outside, which
+  is what screening exists to police, and nothing in the ABI or the reachable
+  revert path requires an attestation for them.
+
+Self-hosting is therefore **still open**, not rejected. The prover crate is
+open source at `starkware-libs/sequencer/crates/starknet_transaction_prover`.
+The question it turns on is whether a self-produced proof satisfies the pool's
+fact registry for pool version 2.0, which is the next thing to test, not
+whether an attestation can be obtained.
 
 Also worth recording for budgeting: at 6 STRK per pool operation, three
-live-pool transactions cost **18 STRK in pool fees alone**, before gas.
+live-pool transactions cost **18 STRK in pool fees alone**, before gas. The
+deployer holds 17.85 STRK, so funding is close but not yet sufficient for the
+full three.
+
+## A useful discovery: `compile_and_panic`
+
+The pool exposes:
+
+```
+compile_and_panic(user_addr, user_private_key, client_actions: Span<ClientAction>)
+```
+
+It compiles client actions into server actions and panics with the result, so
+the compilation step can be inspected read-only, with no prover and no
+transaction. It takes a private key, so it is only ever safe with a throwaway
+account, and no key belonging to this project has been or will be passed to it.
+It is recorded here because it is the cheapest way to validate the action
+encoding ahead of a real write.
 
 ## The indexer is not a blocker
 
@@ -173,16 +235,18 @@ is planned.
 
 Any one of:
 
-1. A proving service URL for mainnet, **plus** a way to obtain a screening
-   attestation for the first deposit. Both come from the hosted service today.
-2. A Wallet API method letting a dapp use the wallet as a proving backend for an
-   SDK-built transaction, which does not exist.
+1. A proving service URL for mainnet.
+2. A self-hosted prover whose output satisfies the pool's fact registry for
+   pool version 2.0. Open, per the section above, and the cheapest thing left
+   to test.
+3. A Wallet API method letting a dapp use the wallet as a proving backend for
+   an SDK-built transaction, which does not exist.
 
-Self-hosting is **rejected**, not deferred. The prover crate is open source at
-`starkware-libs/sequencer/crates/starknet_transaction_prover`, but running it
-does not produce a screening attestation, and the deposit cannot be accepted
-without one. Standing up prover infrastructure would leave the project exactly
-as blocked as it is now, at considerable cost.
+The fallback still worth pursuing, unchanged: Lens registration, then a Ready
+screened deposit, then a Ready private transfer into a Lens-registered address,
+then Lens inbound ECDH recovery. It only needs the registration write to
+succeed, which is the smallest write the pool accepts and the one least likely
+to need an attestation.
 
 Exact question for the sprint channel:
 
@@ -204,7 +268,7 @@ Exact question for the sprint channel:
 | Step | Command | State |
 | --- | --- | --- |
 | Verify a live relationship | `npx tsx scripts/verify-relationship.ts <holder> <counterparty> --mainnet` | written, exercised against live mainnet reads |
-| Deploy the registry | `npx tsx scripts/deploy-registry.ts --mainnet --tight` | rehearsed on Sepolia, records its deployment block |
+| Deploy the registry | `npx tsx scripts/deploy-registry.ts --mainnet` | **done**, see above |
 | Full disclosure lifecycle | `npx tsx scripts/e2e-sepolia.ts` | passing on Sepolia against the live contract |
 
 `verify-relationship.ts` was run against mainnet during this phase. It reads the
@@ -221,7 +285,7 @@ neither is a personal wallet.
 
 | Role | Address | Network |
 | --- | --- | --- |
-| Lens deployer | `0x47366fff6d7da5f313cf6a379f460c8544db248231a532e533afd588d801aca` | mainnet, unfunded |
+| Lens deployer | `0x47366fff6d7da5f313cf6a379f460c8544db248231a532e533afd588d801aca` | mainnet, deployed, 17.85 STRK |
 | Sepolia deployer | `0x56d8c42a83dc976ea0bf367639c0b5ce4f42ea262ae8d1a046f710e13659124` | sepolia, funded by faucet |
 
 Secrets live only in `.env.local`, which is gitignored and confirmed ignored.
@@ -231,6 +295,11 @@ No key, signature or proof fragment appears in this document or any other.
 
 # What `strk20.json` contains
 
-Empty, deliberately. It carries mainnet submission evidence, and there is none
-yet. It will be populated only with confirmed mainnet hashes, and never with
-Sepolia hashes or placeholders.
+Two confirmed mainnet transaction hashes and one mainnet contract address, all
+of them the Lens disclosure registry: its declare, its deploy, and the deployed
+contract.
+
+Stated plainly so nothing is read as more than it is: **these are Lens registry
+transactions, not STRK20 pool transactions.** The pool count is still 0 of 3,
+as recorded at the top of this document. Nothing Sepolia and nothing predicted
+appears in that file.
