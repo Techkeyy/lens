@@ -14,7 +14,9 @@
     "recovery:verify": "npx tsx scripts/verify-recovery-eth.ts",
     "verify:shield": "tsx scripts/verify-shield.ts",
     "register:lens": "tsx scripts/register-lens.ts",
-    "diff:register": "tsx scripts/differential-register.ts"
+    "diff:register": "tsx scripts/differential-register.ts",
+    "throwaway": "tsx scripts/throwaway-account.ts",
+    "prover:test": "tsx scripts/prover-compat-test.ts"
   },
   "dependencies": {
     "@starknet-io/get-starknet-discovery": "^6.0.3",
