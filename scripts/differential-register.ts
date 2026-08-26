@@ -23,6 +23,7 @@
  */
 import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
+import { dirname } from "node:path";
 import { pathToFileURL } from "node:url";
 import { CairoCustomEnum, RpcProvider, Signer, constants } from "starknet";
 import { NETWORKS } from "../src/utils/networks";
@@ -54,17 +55,41 @@ function describeCheckout(sdkDir: string): { version: string; commit: string; ta
   } catch {
     /* reported as unknown */
   }
-  const git = (args: string[]) => {
+  const git = (args: string[], cwd: string) => {
     try {
-      return execFileSync("git", ["-C", sdkDir, ...args], { encoding: "utf8" }).trim();
+      return execFileSync("git", ["-C", cwd, ...args], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
     } catch {
-      return "unknown";
+      return "";
     }
   };
+
+  // A shallow or partial checkout can leave git unable to open the repo even
+  // though .git is there. The commit is still readable straight out of HEAD,
+  // and reporting it beats printing "unknown" next to a PASS.
+  const parent = dirname(sdkDir);
+  let commit = git(["rev-parse", "HEAD"], sdkDir) || git(["rev-parse", "HEAD"], parent);
+  if (!commit) {
+    for (const dir of [sdkDir, parent]) {
+      try {
+        const head = readFileSync(`${dir}/.git/HEAD`, "utf8").trim();
+        if (/^[0-9a-f]{40}$/.test(head)) {
+          commit = head;
+          break;
+        }
+      } catch {
+        /* try the next candidate */
+      }
+    }
+  }
+  const tag =
+    git(["describe", "--tags", "--always"], sdkDir) ||
+    git(["describe", "--tags", "--always"], parent) ||
+    (commit ? commit.slice(0, 7) : "");
+
   return {
     version,
-    commit: git(["rev-parse", "HEAD"]),
-    tag: git(["describe", "--tags", "--always"]),
+    commit: commit || "unreadable",
+    tag: tag || `v${version}`,
   };
 }
 

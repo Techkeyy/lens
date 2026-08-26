@@ -62,6 +62,10 @@ import {
   getDefaultProofDetails,
   serializeClientActions,
 } from "./lib/register-invocation";
+import {
+  EXPECTED_VIRTUAL_PROGRAM_HASH,
+  readLiveProgramHash,
+} from "./lib/live-program-hash";
 
 const SEPOLIA = process.argv.includes("--sepolia");
 const SEND = process.argv.includes("--send");
@@ -217,6 +221,24 @@ async function main() {
   row("expected fee", "6 STRK pool fee, plus roughly 2.9 STRK of gas");
   row("approval gate", gateOpen ? "OPEN" : "CLOSED, LENS_REGISTER_APPROVED is not set");
   row("mode", SEND ? "SEND" : "DRY RUN");
+
+  // Which proof program is the sequencer accepting right now? The pool ignores
+  // virtual_program_hash, so this is the sequencer's answer, not the pool's,
+  // and it is the thing that decides whether a self-hosted prover is usable.
+  const live = await readLiveProgramHash(provider, NET.pool);
+  if (!live) {
+    row("live program hash", "could not be sampled, treat compatibility as unknown");
+  } else {
+    row("live program hash", `${live.virtualProgramHash}  (${live.sampled} txs, block ~${live.fromBlock})`);
+    row("live markers", `${live.programVariant} / ${live.osOutputVersion}`);
+    row(
+      "matches expected",
+      live.virtualProgramHash === EXPECTED_VIRTUAL_PROGRAM_HASH
+        ? "YES"
+        : `NO. expected ${EXPECTED_VIRTUAL_PROGRAM_HASH}`,
+    );
+    if (!live.agreed) row("WARNING", "sampled transactions disagree; the sequencer may be mid-rotation");
+  }
 
   if (!SEND) {
     console.log("\nDRY RUN: nothing was proved and nothing was broadcast.");

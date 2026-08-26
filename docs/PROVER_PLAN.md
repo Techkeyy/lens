@@ -42,47 +42,111 @@ claim about mainnet privacy may be based on it.
 
 ---
 
-# Mainnet: SAFE_TO_SELF_HOST_MAINNET = NO
+# Mainnet compatibility: SOLVED, and the pool class was a red herring
 
-Not because self-hosting is wrong, but because the version is unknown.
+`SAFE_TO_SELF_HOST_MAINNET` was NO because the live pool class did not match
+the published matrix row. That reasoning was aimed at the wrong artefact.
 
-| | Class hash |
+**The pool does not verify the proof.** `validate_proof` destructures
+`ProofFacts` and discards `virtual_program_hash` and
+`starknet_os_config_hash`, asserting only `program_variant`,
+`starknet_os_output_version`, block freshness, and that the message hash binds
+the actions. The real verifier is the **sequencer**, which populates
+`tx_info.proof_facts` only for proofs it has accepted. So the question was never
+"which pool class is deployed", it was "which proof program does the sequencer
+accept".
+
+That is readable from chain, and it is unambiguous.
+
+## Reading the answer off mainnet
+
+`proof_facts` is not serialized by `starknet_getTransactionByHash` on any RPC
+tested, which is why this took a detour. The **feeder gateway** does return it:
+
+```
+https://feeder.alpha-mainnet.starknet.io/feeder_gateway/get_transaction?transactionHash=0x…
+```
+
+Decoded from a real first shield, `0x4f5c1296…`:
+
+| Field | Value |
 | --- | --- |
-| Live mainnet pool `0x0403...812a` | `0x67dddd89d80fedadc06b6f160798f94800a4a70164e5a24301cd0d6076b554d` |
-| Published matrix (`PRIVACY-0.14.3-RC.0`) | `0x52107fadffab71bdcbb6b2ccb68ba3e1b5558d94036538053e159d3076ad633` |
+| `proof_version` | `0x50524f4f4631` = `"PROOF1"` |
+| `program_variant` | `0x5649525455414c5f534e4f53` = `"VIRTUAL_SNOS"` |
+| **`virtual_program_hash`** | **`0x53f6c9fcfd31d27279ff7d7e422b44623550a732b59fe193354a7316a96daa1`** |
+| `starknet_os_output_version` | `0x5649525455414c5f534e4f5330` = `"VIRTUAL_SNOS0"` |
+| `base_block_number` | 13,853,698 |
 
-The matrix row exists to be used whole, and the pool on mainnet is not the pool
-in that row. Standing up `RC.2` because it is the last published row would be
-guessing with real money.
+Sampled across **14 recent successful pool transactions**, spanning blocks up to
+13,883,135: **14 of 14 carry the identical `virtual_program_hash`.** There is one
+accepted program, not a range.
 
-**Blocking questions for the sprint team**, and nothing broader is needed:
+## Mapping that program to an image
 
-| | |
+| Evidence | Value |
 | --- | --- |
-| A | The exact `transaction-prover` tag or image compatible with the pool class actually deployed at `0x0403…812a`. |
-| B | The exact SDK revision expected against that prover. |
-| C | The prover request endpoint and schema, if it differs from the RC.2 SDK implementation. |
-| D | Whether the Sepolia prover speaks the same proving API as the mainnet-compatible build. |
+| Live mainnet pool transactions, 14/14 | `virtual_program_hash` `0x53f6c9fc…96daa1` |
+| `starknet-innovation/snip-36-prover-backend`, `.github/workflows/daily-health.yml` | `EXPECTED_VIRTUAL_OS_PROGRAM_HASH: '0x53f6c9fc…96daa1'`, asserted in CI and built from `SEQUENCER_TAG: e6b6fd2e9932909107833579e5b6efd6c75fa0af` |
+| `transaction-prover:PRIVACY-0.14.3-RC.2`, OCI config label | `org.opencontainers.image.revision` = `e6b6fd2e9932909107833579e5b6efd6c75fa0af` |
+| `starkware-libs/sequencer` commit `e6b6fd2e` | 2026-07-01, "starknet_transaction_prover: default blocking-check to fail-closed" |
 
-## Blockers
+Three independent sources converge on one sequencer commit, and the published
+`PRIVACY-0.14.3-RC.2` image is built from exactly it.
 
-1. **Mainnet-compatible prover tag or image.**
-2. **Prover request compatibility.**
-3. **Sepolia prover URL, for the rehearsal.**
+**Confidence: EXACT.** The published matrix row was right; only the reason for
+trusting it was wrong. Newer is not better here: `APOLLO-0.14.3-RC.16` was built
+2026-08-24 from revision `7dcab710…`, a different commit, and mainnet is still
+accepting the `e6b6fd2e` program.
 
-Resolved and removed from this list: *SDK unavailable* and *SDK package access*.
-The upstream source route works and is now the canonical integration path.
+| Artefact | Value |
+| --- | --- |
+| Image | `ghcr.io/starkware-libs/starknet-privacy/transaction-prover:PRIVACY-0.14.3-RC.2` |
+| amd64 digest | `sha256:a62e7764e034ea25d84d4a235f1f683f7c5f03f88f6646a744599171bf5ca58c` |
+| Source commit | `e6b6fd2e9932909107833579e5b6efd6c75fa0af` |
+| SDK revision | `PRIVACY-0.14.3-RC.2`, differential PASS |
+| Registry auth | none |
 
----
+**SAFE_TO_SELF_HOST_MAINNET = YES**, on evidence, subject to the runtime check
+below.
 
-# Deployment specification, for when the tag is confirmed
+## The check that runs before any fee is paid
+
+Programs can be rotated, and `APOLLO-0.14.3-RC.16` shows the lineage is moving.
+So the mapping is not trusted as a static fact. `scripts/lib/live-program-hash.ts`
+re-reads the accepted program from recent pool transactions, and
+`register-lens.ts` refuses in two places:
+
+1. **Before proving**, if the live program hash no longer matches the expected
+   one, or if sampled transactions disagree, which would mean a rotation is in
+   progress.
+2. **After proving and before submitting**, if the prover's own
+   `proof_facts[2]` is not the accepted program. An incompatible image is
+   detected at zero cost, because a proof is free and only `apply_actions`
+   costs money.
+
+That converts the compatibility question from a judgement into a gate.
+
+## What remains unexplained
+
+The pool class hash still does not match the matrix, and nothing found explains
+why. It no longer blocks anything, since the pool is not the verifier, but it is
+recorded rather than waved away: the deployed class is
+`0x67dddd89…b554d`, the matrix names `0x52107fad…d633`, and the repository still
+carries `TODO_MAINNET_POOL_CLASS_HASH`.
+
+# Deployment specification
 
 Everything below is read from the prover crate's own README and the monorepo
-compatibility matrix. The image tag is deliberately left as a placeholder.
+compatibility matrix. A ready-to-run compose file is at
+[deploy/prover/docker-compose.yml](../deploy/prover/docker-compose.yml), pinned
+by digest rather than tag, bound to localhost, and reached over an SSH tunnel
+because the prover receives the viewing key.
+
+**Nothing has been started, rented or paid for.**
 
 | Item | Value |
 | --- | --- |
-| Image | `ghcr.io/starkware-libs/starknet-privacy/transaction-prover:<CONFIRMED_TAG>` |
+| Image | `transaction-prover@sha256:a62e7764e034ea25d84d4a235f1f683f7c5f03f88f6646a744599171bf5ca58c` (`PRIVACY-0.14.3-RC.2`) |
 | Registry auth | none, the ghcr manifest answers anonymously |
 | Architecture | `linux/amd64` only, no arm64 manifest published |
 | Recommended machine | `c4d-highcpu-48`: 48 vCPU, 96 GB RAM |

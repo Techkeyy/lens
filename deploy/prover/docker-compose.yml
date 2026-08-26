@@ -1,0 +1,61 @@
+# Lens-operated STRK20 transaction prover.
+#
+# NOT STARTED. This file is a specification, not a running service. It exists so
+# that provisioning is a copy-paste rather than a design exercise once the
+# machine is approved.
+#
+# The image is pinned by digest, not by tag, because a tag can be moved. The
+# digest below is the linux/amd64 manifest of PRIVACY-0.14.3-RC.2, whose
+# org.opencontainers.image.revision is sequencer commit
+# e6b6fd2e9932909107833579e5b6efd6c75fa0af — the commit that produces the
+# virtual-OS program hash every live mainnet pool transaction carries. See
+# docs/PROVER_PLAN.md for the full chain of evidence.
+#
+# Machine: linux/amd64. StarkWare recommend c4d-highcpu-48 (48 vCPU, 96 GB) for
+# production throughput. This workload is a single proof, so the instance is
+# short-lived and should be destroyed immediately afterwards.
+#
+# The prover receives the viewing key in the proved transaction's calldata.
+# That is why it must be infrastructure we operate, and why it is bound to
+# localhost here rather than exposed. Reach it over an SSH tunnel:
+#
+#   ssh -N -L 3000:127.0.0.1:3000 user@host
+#   PROVER_URL=http://127.0.0.1:3000 npx tsx scripts/register-lens.ts
+#
+# Nothing here opens a public port, and no TLS is configured, because nothing
+# should be reachable from the internet.
+
+services:
+  prover:
+    image: ghcr.io/starkware-libs/starknet-privacy/transaction-prover@sha256:a62e7764e034ea25d84d4a235f1f683f7c5f03f88f6646a744599171bf5ca58c
+    platform: linux/amd64
+    restart: "no"
+    ports:
+      # Localhost only. See the SSH tunnel note above.
+      - "127.0.0.1:3000:3000"
+    environment:
+      # Any Starknet node speaking JSON-RPC v0.10. A self-run Pathfinder is not
+      # required: the prover's only node interface is RPC_URL, and public
+      # mainnet endpoints already answer starknet_specVersion with 0.10.2.
+      # Override at deploy time; do not commit a keyed URL.
+      RPC_URL: ${RPC_URL:?set RPC_URL to a v0.10 Starknet mainnet endpoint}
+      CHAIN_ID: SN_MAIN
+      PROVER_PORT: "3000"
+      PROVER_IP: 0.0.0.0
+      # One proof at a time. Raising this multiplies memory use.
+      MAX_CONCURRENT_REQUESTS: "1"
+      MAX_CONNECTIONS: "4"
+      # Fetch state once up front so the proving run makes fewer RPC calls.
+      PREFETCH_STATE: "true"
+      RUST_LOG: ${RUST_LOG:-info}
+    healthcheck:
+      # The prover's own documented health call. Expect result "0.10.0".
+      test:
+        - CMD-SHELL
+        - >-
+          wget -qO- --post-data='{"jsonrpc":"2.0","id":1,"method":"starknet_specVersion","params":[]}'
+          --header='Content-Type: application/json' http://127.0.0.1:3000 | grep -q result
+      interval: 15s
+      timeout: 10s
+      retries: 20
+      start_period: 60s
