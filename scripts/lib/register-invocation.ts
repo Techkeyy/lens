@@ -2,7 +2,10 @@
  * Build the proof invocation for a STRK20 registration.
  *
  * This mirrors `sdk/src/internal/proof-invocation-factory.ts` at
- * `PRIVACY-0.14.3-RC.2`, commit `9bfeb8dd35565a2915a0617dff3f649bd5bb891a`,
+ * `PRIVACY-0.14.3-RC.3`, commit `efc61cbbdab5b714b5cf915f9735d88948e2ea82`,
+ * which is the revision deployed on mainnet. That file is byte-identical
+ * between RC.2 and RC.3; `client-actions.ts` is not, and the difference
+ * matters. Originally written against RC.2, commit `9bfeb8dd…`,
  * deliberately and line for line where it matters. It is not an independent
  * design, and it should not become one: `scripts/differential-register.ts`
  * compares the two field by field against the real upstream source, and any
@@ -32,8 +35,15 @@ import {
 } from "starknet";
 
 /**
- * Mirrors upstream `CLIENT_ACTION_TYPES`. The order is the Cairo enum's variant
- * order and must not be rearranged.
+ * Mirrors upstream `CLIENT_ACTION_TYPES` at **RC.3**, which is the revision
+ * actually deployed on mainnet: building the pool from source at
+ * `PRIVACY-0.14.3-RC.3` reproduces the live class hash `0x67dddd89…b554d`
+ * exactly.
+ *
+ * The order is the Cairo enum's variant order and must not be rearranged.
+ * RC.3 appends a tenth variant, `ComputeAndInvoke`, which RC.2 does not have,
+ * and the live pool's own ABI carries all ten. Nine entries here would be a
+ * quiet mismatch against the deployed contract.
  */
 export const CLIENT_ACTION_TYPES = [
   "SetViewingKey",
@@ -45,6 +55,7 @@ export const CLIENT_ACTION_TYPES = [
   "UseNote",
   "Withdraw",
   "InvokeExternal",
+  "ComputeAndInvoke",
 ] as const;
 
 export type ClientAction = { type: (typeof CLIENT_ACTION_TYPES)[number]; input: unknown };

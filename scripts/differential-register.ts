@@ -181,6 +181,7 @@ async function main() {
     "UseNote",
     "Withdraw",
     "InvokeExternal",
+    "ComputeAndInvoke",
   ] as const) {
     const a = { type, input: { random: TEST_RANDOM } };
     allSame =

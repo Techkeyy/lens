@@ -135,36 +135,68 @@ Resolved by the account holder, in this order:
 Balance before the deployment, agreeing across three RPCs: **21.8953 STRK**.
 Declare plus deploy cost 4.0465 STRK, leaving 17.8488 STRK.
 
-# Pool class provenance, reproduced from source
+# Pool class provenance: EXACT, and it is RC.3
 
-The deployed class does not match the published matrix. Rather than leave that
-as a shrug, the class hashes were rebuilt from official source.
+The deployed class does not match the published matrix, so the class hashes were
+rebuilt from official source until one matched. One did.
 
 **Method, validated before use.** scarb `2.17.0`, pinned by the repository's own
 `.tool-versions`, on the **release** profile, because the workspace sets
 `[profile.release.cairo] inlining-strategy = 250` and that changes the class
-hash. Building `PRIVACY-0.14.3-RC.0` this way reproduces the published hash
-exactly, which is what makes the rest of the table trustworthy. A `dev` build
-gives `0x215be199…`, neither value: a profile mismatch produces a
+hash. Building `PRIVACY-0.14.3-RC.0` this way reproduces the published matrix
+hash exactly, which is what makes the rest of the table trustworthy. A `dev`
+build gives `0x215be199…`, neither value: a profile mismatch produces a
 plausible-looking wrong answer.
 
-| Tag | Commit | Class hash | Matches live? |
+| Tag | Commit | Class hash | Live? |
 | --- | --- | --- | --- |
-| `PRIVACY-0.14.3-RC.0` | `fe52334` | `0x52107fadffab71bdcbb6b2ccb68ba3e1b5558d94036538053e159d3076ad633` | no, and equals the published matrix value |
-| `PRIVACY-0.14.3-RC.1` | `c0d040d` | `0x2d42d758b6201e47219cd2d87640944b2bd019a669fc60e7f78f887a22fe073` | no |
-| `PRIVACY-0.14.3-RC.2` | `9bfeb8d` | `0x71cfe7664f1132859fd1184322046fad37bb9670c7afbb75cceac5cb784816e` | no |
-| **live mainnet** | unknown | `0x67dddd89d80fedadc06b6f160798f94800a4a70164e5a24301cd0d6076b554d` | — |
+| `RC.0` | `fe52334` | `0x52107fadffab71bdcbb6b2ccb68ba3e1b5558d94036538053e159d3076ad633` | no, and equals the published matrix |
+| `RC.1` | `c0d040d` | `0x2d42d758b6201e47219cd2d87640944b2bd019a669fc60e7f78f887a22fe073` | no |
+| `RC.2` | `9bfeb8d` | `0x71cfe7664f1132859fd1184322046fad37bb9670c7afbb75cceac5cb784816e` | no |
+| **`RC.3`** | **`efc61cb`** | **`0x67dddd89d80fedadc06b6f160798f94800a4a70164e5a24301cd0d6076b554d`** | **YES** |
+| **`RC.4`** | **`722d1cf`** | **`0x67dddd89d80fedadc06b6f160798f94800a4a70164e5a24301cd0d6076b554d`** | **YES** |
+| `RC.5` | `66e3caa` | `0x261555f9ef241e0b246ace06edafeca8d28d79e8dfbaa6ac326c398bce59b82` | no |
 
-RC.3 to RC.5 are still building; this table is updated as they land.
+**Confidence: EXACT, and bounded.** The live pool is `PRIVACY-0.14.3-RC.3`, whose
+`packages/privacy` source is unchanged through RC.4. It is bracketed on both
+sides: RC.2 below and RC.5 above both differ. This is not "matches something",
+it is "matches exactly these two adjacent tags and nothing else in the line".
 
-**Why this is being chased even though it blocks nothing.** The prover mapping
-is settled independently and does not depend on the class, because the pool is
-not the verifier. But every conclusion in these documents about screening,
-`validate_proof` ordering and the entry-point list was read from `privacy.cairo`
-at RC.2. If no published tag produces the deployed class, that source is a close
-relative of the deployed contract rather than the deployed contract itself, and
-the conclusions drawn from it are correspondingly weaker. That is worth knowing
-before spending, not after.
+**RC.5 is not what mainnet runs**, which is the second time in this
+investigation that the newest published revision would have been the wrong
+choice.
+
+## What this changed, and what it did not
+
+Everything in these documents about the pool was read from RC.2 source. RC.3 is
+what is deployed, so the load-bearing claims were re-checked against RC.3 and
+all hold, at identical line numbers:
+
+| Claim | RC.3 |
+| --- | --- |
+| `assert(!proof_facts_span.is_empty(), EMPTY_PROOF_FACTS)` | line 808, unchanged |
+| `program_variant == VIRTUAL_SNOS` / `VIRTUAL_SNOS0` | lines 824-825, unchanged |
+| Deposit requires screening, non-deposit must pass `None` | lines 791-796, unchanged |
+| `collect_fee()` unconditional, before the actions | line 790, unchanged |
+| `is_canonical_key(user_private_key)` | line 260, unchanged |
+
+The RC.2 to RC.3 diff is 52 lines: a helper rename
+(`extract_server_actions_from_compile_and_panic` to
+`extract_server_actions_from_panic`), a new `ExternalContractInvoked` event, and
+a refactor of the compute-invoke path. None of it touches registration,
+screening, fees or proof validation.
+
+**One thing it did change, and it mattered.** The SDK's `client-actions.ts`
+differs: RC.3 appends a **tenth** `ClientAction` variant, `ComputeAndInvoke`,
+which RC.2 does not have. Our `serializeClientActions` mirrored the nine-variant
+RC.2 list. The live pool's own ABI carries all ten, so that was a quiet mismatch
+against the deployed contract. It has been corrected and the differential
+re-run against RC.3: **identical on all 26 compared fields**, including
+`ComputeAndInvoke`.
+
+`proof-invocation-factory.ts` is byte-identical across RC.2, RC.3, RC.4 and
+RC.5, so the transaction construction itself was never at risk. Only the action
+list was.
 
 ---
 
