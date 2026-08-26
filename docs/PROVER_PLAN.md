@@ -126,13 +126,33 @@ re-reads the accepted program from recent pool transactions, and
 
 That converts the compatibility question from a judgement into a gate.
 
-## What remains unexplained
+## The pool class, chased down separately
 
-The pool class hash still does not match the matrix, and nothing found explains
-why. It no longer blocks anything, since the pool is not the verifier, but it is
-recorded rather than waved away: the deployed class is
-`0x67dddd89…b554d`, the matrix names `0x52107fad…d633`, and the repository still
-carries `TODO_MAINNET_POOL_CLASS_HASH`.
+The class mismatch does not block anything, because the pool is not the
+verifier. It is still worth resolving, because every conclusion in these
+documents about screening, `validate_proof` ordering and entry points was read
+from `privacy.cairo` at RC.2. If the deployed class is not a published revision,
+that source is not authoritative for the deployed behaviour.
+
+So the class hashes were reproduced from source rather than guessed at.
+
+**Method, validated before use.** scarb `2.17.0` is pinned by the repository's
+own `.tool-versions`, and the workspace sets `[profile.release.cairo]
+inlining-strategy = 250`, which changes the class hash. Building `PRIVACY-0.14.3-RC.0`
+with scarb 2.17.0 on the **release** profile reproduces the published class
+hash exactly:
+
+```
+built    0x52107fadffab71bdcbb6b2ccb68ba3e1b5558d94036538053e159d3076ad633
+matrix   0x52107fadffab71bdcbb6b2ccb68ba3e1b5558d94036538053e159d3076ad633
+```
+
+A `dev`-profile build gives `0x215be199…`, which is neither, and is the trap
+worth recording: a profile mismatch produces a plausible-looking wrong answer.
+
+With the method proven, the same build is run across the 0.14.3 tags to find
+which, if any, produces the deployed `0x67dddd89…b554d`. Results are recorded in
+[MAINNET_EVIDENCE.md](./MAINNET_EVIDENCE.md).
 
 # Deployment specification
 
@@ -181,15 +201,32 @@ closes that, so local proving is not a tuning exercise.
 
 ## Cost
 
-Not stated in any StarkWare document, and this repository has no cloud pricing
-tool to query, so **no cost figure is asserted here**. What can be said without
-inventing numbers: the workload is one proof, the container is stateless, and it
-needs the machine only for the minutes it runs. That shape suits an
-on-demand instance destroyed immediately afterwards rather than anything
-standing. The exact rate should be read off the provider's own pricing page at
-the time, by a person, before anything is created.
+StarkWare publish no figure, so this comes from current provider pricing for the
+exact machine type they recommend.
 
-**Infrastructure started: none.**
+`c4d-highcpu-48` (48 vCPU, 90 GB) on-demand, read 2026-08-26:
+
+| Region | USD / hour |
+| --- | --- |
+| us-central1, us-east1, us-east4, us-east5, us-west1 | **1.9076** |
+| europe-west4 | 2.0029 |
+| europe-west2 (London) | 2.1746 |
+| asia-northeast1 (Tokyo) | 2.4497 |
+
+The workload is **one proof**. The container is stateless, pulls state over RPC,
+and holds the machine only while it runs. Allowing a generous hour for boot,
+image pull, the proof and teardown, the realistic cost is **about two dollars**,
+and two hours would still be about four.
+
+That is worth stating plainly because this has been discussed as though it were
+a serious infrastructure commitment. It is not. The constraint was never the
+money, it was not knowing which image to run, and that is now settled.
+
+Cheaper options exist (spot instances, or a fixed-price host such as Hetzner's
+48-vCPU tier) but none of them is worth the added uncertainty for a two-dollar,
+one-shot job on a deadline.
+
+**Infrastructure started: none. Nothing rented, nothing paid.**
 
 ---
 
