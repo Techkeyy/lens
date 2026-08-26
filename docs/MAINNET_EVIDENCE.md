@@ -135,6 +135,39 @@ Resolved by the account holder, in this order:
 Balance before the deployment, agreeing across three RPCs: **21.8953 STRK**.
 Declare plus deploy cost 4.0465 STRK, leaving 17.8488 STRK.
 
+# Pool class provenance, reproduced from source
+
+The deployed class does not match the published matrix. Rather than leave that
+as a shrug, the class hashes were rebuilt from official source.
+
+**Method, validated before use.** scarb `2.17.0`, pinned by the repository's own
+`.tool-versions`, on the **release** profile, because the workspace sets
+`[profile.release.cairo] inlining-strategy = 250` and that changes the class
+hash. Building `PRIVACY-0.14.3-RC.0` this way reproduces the published hash
+exactly, which is what makes the rest of the table trustworthy. A `dev` build
+gives `0x215be199…`, neither value: a profile mismatch produces a
+plausible-looking wrong answer.
+
+| Tag | Commit | Class hash | Matches live? |
+| --- | --- | --- | --- |
+| `PRIVACY-0.14.3-RC.0` | `fe52334` | `0x52107fadffab71bdcbb6b2ccb68ba3e1b5558d94036538053e159d3076ad633` | no, and equals the published matrix value |
+| `PRIVACY-0.14.3-RC.1` | `c0d040d` | `0x2d42d758b6201e47219cd2d87640944b2bd019a669fc60e7f78f887a22fe073` | no |
+| `PRIVACY-0.14.3-RC.2` | `9bfeb8d` | `0x71cfe7664f1132859fd1184322046fad37bb9670c7afbb75cceac5cb784816e` | no |
+| **live mainnet** | unknown | `0x67dddd89d80fedadc06b6f160798f94800a4a70164e5a24301cd0d6076b554d` | — |
+
+RC.3 to RC.5 are still building; this table is updated as they land.
+
+**Why this is being chased even though it blocks nothing.** The prover mapping
+is settled independently and does not depend on the class, because the pool is
+not the verifier. But every conclusion in these documents about screening,
+`validate_proof` ordering and the entry-point list was read from `privacy.cairo`
+at RC.2. If no published tag produces the deployed class, that source is a close
+relative of the deployed contract rather than the deployed contract itself, and
+the conclusions drawn from it are correspondingly weaker. That is worth knowing
+before spending, not after.
+
+---
+
 # The proving blocker
 
 Reduced during this phase from "the SDK route is blocked" to something much
