@@ -20,12 +20,19 @@ import { formatAmount } from "@/core/view";
  * through `wallet_strk20InvokeTransaction`, so the wallet proves and submits
  * with its own proving service. There is deliberately no Lens prover path.
  *
- * There is deliberately no REGISTER button either, and not because registration
- * is impossible. Wallet API 0.10.3 defines exactly three STRK20 methods and none
- * of them registers a user. Registration happens as part of the first shield:
- * verified on mainnet in tx 0x4f5c1296…, a single `apply_actions` call that
- * emitted ViewingKeySet, Deposit and EncNoteCreated together. So the shield
- * button is the registration path, and it is enabled while unregistered.
+ * There is deliberately no REGISTER button: Wallet API 0.10.3 defines exactly
+ * three STRK20 methods and none of them registers a user.
+ *
+ * An earlier version of this page offered Shield while unregistered, on the
+ * reading that the wallet would register the user inside the first shield. The
+ * protocol does behave that way, and tx 0x4f5c1296… shows it: one
+ * `apply_actions` emitting ViewingKeySet, Deposit and EncNoteCreated together.
+ * The dapp Wallet API does not. Ready refused
+ * `wallet_strk20InvokeTransaction` three times with code 118 NOT_REGISTERED,
+ * returning no transaction hash and spending nothing.
+ *
+ * So every action here now requires an already-registered account, and the
+ * first shield belongs in Ready's own interface.
  *
  * Nothing is submitted on load. Each write needs the exact confirmation phrase
  * typed, then a click, then Ready's own approval.
@@ -184,13 +191,27 @@ export default function ReadyClient() {
   const canAfford = publicWei !== null && publicWei >= needed;
   const hasPrivate = privateWei !== null && privateWei > 0n;
 
-  // Shield is the registration path, so it must be available while unregistered.
-  const shieldBlock = !canAfford
-    ? `Needs ${formatAmount(needed, DECIMALS)} STRK (${formatAmount(DEPOSIT, DECIMALS)} deposit plus the ${formatAmount(POOL_FEE, DECIMALS)} pool fee).`
-    : "";
+  /**
+   * Shield used to be offered while unregistered, on the reading that the
+   * wallet would register the user inside the first shield. The protocol does
+   * work that way: a single `apply_actions` emits ViewingKeySet, Deposit and
+   * EncNoteCreated together, and that is visible on chain.
+   *
+   * The dapp Wallet API does not. Ready refused
+   * `wallet_strk20InvokeTransaction` three times with code 118
+   * `NOT_REGISTERED`, returning no transaction hash and spending nothing. So
+   * the wallet will bootstrap registration through its own interface but not
+   * on a dapp's behalf, and offering the button here only produces a refusal.
+   */
+  const shieldBlock =
+    registration !== "registered"
+      ? "This Ready account is not yet registered with STRK20. Ready's dapp Wallet API does not bootstrap registration: it answers NOT_REGISTERED. Shield once inside Ready X first, then return here."
+      : !canAfford
+        ? `Needs ${formatAmount(needed, DECIMALS)} STRK (${formatAmount(DEPOSIT, DECIMALS)} deposit plus the ${formatAmount(POOL_FEE, DECIMALS)} pool fee).`
+        : "";
   const transferBlock =
     registration !== "registered"
-      ? "No shielded balance yet. Shield first, which also registers this account."
+      ? "Not registered yet. Shield once inside Ready X first."
       : !hasPrivate
         ? "No shielded balance to send."
         : "";
@@ -270,12 +291,20 @@ export default function ReadyClient() {
 
           {registration !== "registered" && (
             <p style={{ marginTop: "1.2rem", padding: "0.9rem", border: "1px solid #ccc", color: "#555" }}>
-              This account is not registered with the pool, and that is expected. Wallet API 0.10.3
-              has no registration method, so there is no register button here. Registration happens
-              inside the first shield: verified on mainnet in tx{" "}
-              <code>0x4f5c129690bf459da7edc625d127ecf4eaad3985df713a986d07424666d9378</code>, one{" "}
-              <code>apply_actions</code> call that emitted ViewingKeySet, Deposit and EncNoteCreated
-              together, for a single pool fee.
+              <strong>Shield once inside Ready X itself, then come back here.</strong>
+              <br />
+              This account is not registered with STRK20, and a dapp cannot fix that. Wallet API
+              0.10.3 has no registration method, and Ready refuses{" "}
+              <code>wallet_strk20InvokeTransaction</code> from a dapp while the account is
+              unregistered: it answers code 118 <code>NOT_REGISTERED</code> and returns no
+              transaction, so nothing is spent.
+              <br />
+              <br />
+              At protocol level registration really does happen inside the first shield, as tx{" "}
+              <code>0x4f5c129690bf459da7edc625d127ecf4eaad3985df713a986d07424666d9378</code> shows:
+              one <code>apply_actions</code> emitting ViewingKeySet, Deposit and EncNoteCreated for a
+              single pool fee. Ready will do that from its own interface. It just will not do it on a
+              dapp&apos;s behalf.
             </p>
           )}
 
@@ -293,7 +322,7 @@ export default function ReadyClient() {
 
           <div style={{ marginTop: "1.5rem", display: "grid", gap: "1.1rem" }}>
             <Action
-              label={`Shield ${formatAmount(DEPOSIT, DECIMALS)} STRK  (registers this account)`}
+              label={`Shield ${formatAmount(DEPOSIT, DECIMALS)} STRK`}
               block={shieldBlock}
               onRun={() => invoke("Shield", [{ type: "deposit", token: STRK, amount: `0x${DEPOSIT.toString(16)}` }])}
             />

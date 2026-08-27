@@ -72,6 +72,36 @@ happen before the shield. Ready requests it as part of its own flow.
 
 ---
 
+# Correction: the dapp Wallet API will not bootstrap registration
+
+The section below reasoned that because the protocol registers inside the first
+shield, the correct dapp behaviour was to offer the shield and let registration
+happen inside it. **Live behaviour disproves that**, and it was the optimistic
+reading of an ambiguous sentence rather than something observed.
+
+Ready X refused `wallet_strk20InvokeTransaction` with a deposit action **three
+times**, each with code `118 NOT_REGISTERED`, returning no transaction hash.
+
+Verified afterwards that nothing was spent, on two RPCs: Ready's STRK balance
+unchanged at **24.944503** to the last digit, allowance still `0`,
+`get_public_key` still `0`, and zero `ViewingKeySet`, `Deposit` or
+`EncNoteCreated` events for the account across 40,000 blocks. The wallet refused
+before building anything.
+
+So there are two distinct flows, and the spec sentence covers only the first:
+
+| | Registers an unregistered account? |
+| --- | --- |
+| **Ready's own privacy interface** | yes, this is where a first shield belongs |
+| **Dapp Wallet API** (`wallet_strk20InvokeTransaction`) | **no**, answers `NOT_REGISTERED` |
+
+`/ready` now disables every action while the account is unregistered and says
+where to go instead. The protocol-level finding underneath is still correct: a
+first shield really is one `apply_actions` emitting registration and deposit
+together for a single pool fee. Ready will just only do it from its own UI.
+
+---
+
 # There is no dapp-driven registration method
 
 
