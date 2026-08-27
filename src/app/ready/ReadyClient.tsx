@@ -38,11 +38,18 @@ const DECIMALS = 18;
 const UNIT = 10n ** BigInt(DECIMALS);
 
 /**
- * Sized against the live balance in docs/READY_ROUTE.md. Three pool operations
- * cost 18 STRK in protocol fees before anything is shielded, so the deposit has
- * to fit in what is left with room to spare.
+ * The approved minimal plan: shield 2, transfer 1 to Lens, leave 1 shielded so
+ * the disclosure snapshot has a visible remainder.
+ *
+ * Sized against the live balance. Each pool operation costs 6 STRK in protocol
+ * fee plus roughly 2.9 STRK of gas, measured across eight real mainnet pool
+ * transactions, so two Ready operations come to about 17.8 STRK before the
+ * deposit itself. The deposit has to fit in what is left with room to spare.
+ *
+ * Every figure the page shows is derived from these constants, so the amount is
+ * changed here and nowhere else.
  */
-const DEPOSIT = 3n * UNIT;
+const DEPOSIT = 2n * UNIT;
 const TRANSFER = 1n * UNIT;
 const POOL_FEE = 6n * UNIT;
 const CONFIRM = "I understand this spends real STRK";
