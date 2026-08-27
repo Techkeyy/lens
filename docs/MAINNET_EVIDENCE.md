@@ -12,17 +12,67 @@ Status as of 2026-08-25.
 
 # STRK20 LIVE-POOL TRANSACTIONS
 
-**None.** No transaction has been made against the STRK20 privacy pool on
-mainnet or on Sepolia.
+**1 of 3.**
 
-This is blocked by a dependency outside the repository. See
-[The proving blocker](#the-proving-blocker) below for the evidence trail.
+## TX 1: Ready first shield, registration and deposit
 
-Required by the sprint, quoting its README: "Three mainnet transaction hashes in
-`strk20.json`, each proving a real call against the STRK20 pool." Registry
-declare, registry deploy, and Lens authorize and revoke do not count.
-Current count: **0 of 3**. The Lens registry deployment is real mainnet
-activity but is not pool activity, and is counted separately below.
+| | |
+| --- | --- |
+| Hash | `0x5cde763c39f5c48436bb49d4b0b947f987af9eebbf1d92ca4385c4478fc6f71` |
+| Block | 13,936,109 |
+| Status | `SUCCEEDED`, **`ACCEPTED_ON_L1`** |
+| Pool | `0x040337b1af3c663e86e333bab5a4b28da8d4652a15a69beee2b677776ffe812a` |
+| Pool events | `ViewingKeySet`, `Deposit`, `EncNoteCreated`, `Withdrawal` |
+| Account registered | `0x04c7082c068f3d78d0637c867041e322a33b03ed70606ad4bd8e5771a13f99c8` |
+| Registered public key | `0x72429205385fbcae9329f09e3982c18440c056747b3ab64dba27537859a094b` |
+
+Verified independently on two RPCs with `npm run verify:shield`, which checks
+the receipt, that pool events were actually emitted, and that `get_public_key`
+moved off zero. It was executed inside Ready's own interface, not by Lens,
+because the dapp Wallet API refuses to bootstrap an unregistered account.
+
+## What the transaction actually did, which is not what was predicted
+
+The fee is not charged the way the SDK route charges it. Reading the events in
+order: deposit **8 STRK**, then a **`Withdrawal` of 6 STRK** back out. Net
+shielded, 2 STRK. The 6 STRK protocol fee is taken *out of the deposited
+amount* rather than pulled from the account separately.
+
+**Gas was not paid by the Ready account.** The transaction's sender is
+`0x2307c325ff2dd2fb6d9b3e9f67a55b6ec6a5084cd9c27fe6106f7d29dbdda09`, a relayer,
+not the user. `actual_fee` was 3.359518 FRI and none of it came out of Ready.
+
+Measured against the balance rather than inferred:
+
+| | |
+| --- | --- |
+| Ready STRK before | 24.944503 |
+| Ready STRK after | 16.944503 |
+| **Actual public reduction** | **exactly 8.000000 STRK** |
+| Of which protocol fee | 6 STRK |
+| Of which shielded | 2 STRK |
+| Gas charged to Ready | **none** |
+
+The pre-flight predicted about 10.9 STRK, being 8 plus roughly 2.9 of gas. The
+real figure is 8.0, because the wallet route relays and sponsors. The gas
+estimate was right for a self-submitted transaction and wrong for this one, and
+it was wrong in the user's favour.
+
+## Third independent confirmation of the prover mapping
+
+This transaction's own proof facts carry:
+
+| | |
+| --- | --- |
+| `program_variant` | `"VIRTUAL_SNOS"` |
+| `virtual_program_hash` | `0x53f6c9fcfd31d27279ff7d7e422b44623550a732b59fe193354a7316a96daa1` |
+| `starknet_os_output_version` | `"VIRTUAL_SNOS0"` |
+
+Identical to the program hash mapped to `transaction-prover:PRIVACY-0.14.3-RC.2`
+via sequencer commit `e6b6fd2e…`. This is now confirmed by a transaction we
+caused ourselves, not only by sampling other people's. It does not change
+`SAFE_TO_SELF_HOST_MAINNET` on its own, since no proof has been produced by our
+own prover yet, but it removes any doubt about the target.
 
 ---
 
