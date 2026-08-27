@@ -8,9 +8,11 @@ import {
   type WalletWithStarknetFeatures,
 } from "@starknet-io/get-starknet-wallet-standard/features";
 import { message } from "../probe/classify";
+import { hash } from "starknet";
 import {
   publicViewingKey,
   viewingKeyFromWalletSignature,
+  viewingKeyMessage,
   viewingKeyTypedData,
 } from "@/core/session";
 import { NETWORKS, providerFor } from "@/utils/networks";
@@ -39,10 +41,12 @@ import { poolReader } from "@/core/read";
  * printing a confident NO MATCH against an unregistered zero.
  */
 
+type Candidate = { label: string; note: string; derived?: string; match?: boolean; error?: string };
+
 type Result =
   | { kind: "idle" }
   | { kind: "unregistered" }
-  | { kind: "done"; poolKey: string; lensKey: string; match: boolean };
+  | { kind: "done"; poolKey: string; candidates: Candidate[]; anyMatch: boolean };
 
 export default function CompareClient() {
   const [wallets, setWallets] = useState<readonly WalletWithStarknetFeatures[]>([]);
@@ -97,22 +101,65 @@ export default function CompareClient() {
         return;
       }
 
-      // One signature, through the same typed data the Lens session flow uses.
       const feature = wallet.features[StarknetWalletApi];
-      const signature = (await feature.request({
-        type: "wallet_signTypedData",
-        params: viewingKeyTypedData(network.chainId, network.pool) as never,
-      })) as string[];
+      const candidates: Candidate[] = [];
 
-      // The derived key is a local const and stays one. Only its public half
-      // is ever handed to state, which is what gets rendered.
-      const derivedPublic = publicViewingKey(viewingKeyFromWalletSignature(signature));
+      /**
+       * Two candidate derivations, because one of them cannot match by
+       * construction and a NO on that alone would prove nothing.
+       *
+       * 1. Lens's own SNIP-12 typed data. Its domain literally says "Lens", so
+       *    no wallet deriving a key independently could ever produce it.
+       *    Included because it is what the product uses today.
+       * 2. The derivation the sprint publishes as canonical: a signature over
+       *    `starknetKeccak("chainId:pool")`. This is the one that could
+       *    genuinely match. Wallets generally refuse to sign a bare hash, and
+       *    that refusal is itself an answer.
+       */
+      const attempts: Array<{ label: string; note: string; run: () => Promise<string[]> }> = [
+        {
+          label: "Lens SNIP-12 typed data",
+          note: 'the domain says "Lens", so a wallet-derived key cannot match this by construction',
+          run: async () =>
+            (await feature.request({
+              type: "wallet_signTypedData",
+              params: viewingKeyTypedData(network.chainId, network.pool) as never,
+            })) as string[],
+        },
+        {
+          label: "canonical starknetKeccak(chainId:pool)",
+          note: "the derivation the sprint publishes; the only one that could actually match",
+          run: async () => {
+            const messageHash = hash.starknetKeccak(viewingKeyMessage(network.chainId, network.pool));
+            return (await feature.request({
+              type: "wallet_signMessage" as never,
+              params: { message: `0x${messageHash.toString(16)}` } as never,
+            })) as string[];
+          },
+        },
+      ];
+
+      for (const attempt of attempts) {
+        try {
+          // The derived key is a local const and stays one. Only its public
+          // half reaches state, which is what gets rendered.
+          const derivedPublic = publicViewingKey(viewingKeyFromWalletSignature(await attempt.run()));
+          candidates.push({
+            label: attempt.label,
+            note: attempt.note,
+            derived: `0x${derivedPublic.toString(16)}`,
+            match: derivedPublic === onChain,
+          });
+        } catch (e) {
+          candidates.push({ label: attempt.label, note: attempt.note, error: message(e) });
+        }
+      }
 
       setResult({
         kind: "done",
         poolKey: `0x${onChain.toString(16)}`,
-        lensKey: `0x${derivedPublic.toString(16)}`,
-        match: derivedPublic === onChain,
+        candidates,
+        anyMatch: candidates.some((c) => c.match),
       });
     } catch (e) {
       setError(message(e));
@@ -130,8 +177,9 @@ export default function CompareClient() {
         Does Lens derive the key the wallet registered?
       </h1>
       <p style={{ color: "#666" }}>
-        Development only, and read-only on chain. This asks for **one signature**, derives a viewing
-        key from it in memory, and compares only the <em>public</em> halves. The private half is
+        Development only, and read-only on chain. This asks the wallet to sign two candidate
+        messages, derives a viewing key from each in memory, and compares only the{" "}
+        <em>public</em> halves. The private half is
         never rendered, logged, stored, or put into component state. Nothing is submitted and no
         funds move.
       </p>
@@ -188,25 +236,39 @@ export default function CompareClient() {
 
           {result.kind === "done" && (
             <div style={{ marginTop: "1.8rem" }}>
-              <table style={{ borderCollapse: "collapse", width: "100%" }}>
-                <tbody>
-                  <tr>
-                    <td style={cell}>Ready pool public key</td>
-                    <td style={{ padding: "0.35rem 0", wordBreak: "break-all" }}>{result.poolKey}</td>
-                  </tr>
-                  <tr>
-                    <td style={cell}>Lens-derived public key</td>
-                    <td style={{ padding: "0.35rem 0", wordBreak: "break-all" }}>{result.lensKey}</td>
-                  </tr>
-                </tbody>
-              </table>
-              <p style={{ marginTop: "1rem", fontSize: "1.1rem", color: result.match ? "#067d38" : "#777" }}>
-                <strong>MATCH: {result.match ? "YES" : "NO"}</strong>
+              <p style={{ margin: 0 }}>
+                <span style={{ color: "#777" }}>Registered pool public key</span>
+                <br />
+                <span style={{ wordBreak: "break-all" }}>{result.poolKey}</span>
+              </p>
+              {result.candidates.map((c) => (
+                <div key={c.label} style={{ marginTop: "1.2rem" }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", gap: "1rem" }}>
+                    <span>{c.label}</span>
+                    <strong style={{ color: c.match ? "#067d38" : c.error ? "#777" : "#a11" }}>
+                      {c.error ? "NOT SIGNED" : c.match ? "MATCH" : "NO MATCH"}
+                    </strong>
+                  </div>
+                  <p style={{ margin: "0.2rem 0 0", fontSize: "0.85rem", color: "#777" }}>{c.note}</p>
+                  {c.derived && (
+                    <p style={{ margin: "0.2rem 0 0", fontSize: "0.85rem", wordBreak: "break-all" }}>
+                      {c.derived}
+                    </p>
+                  )}
+                  {c.error && (
+                    <p style={{ margin: "0.2rem 0 0", fontSize: "0.85rem", color: "#777", wordBreak: "break-word" }}>
+                      {c.error}
+                    </p>
+                  )}
+                </div>
+              ))}
+              <p style={{ marginTop: "1.4rem", fontSize: "1.05rem", color: result.anyMatch ? "#067d38" : "#777" }}>
+                <strong>MATCH: {result.anyMatch ? "YES" : "NO"}</strong>
               </p>
               <p style={{ color: "#777", fontSize: "0.9rem" }}>
-                {result.match
-                  ? "A match would mean a normal wallet user can be read by Lens without a separate Lens-controlled registration. Report it before changing anything: this is a finding, not yet a decision."
-                  : "No match, which is the expected result if the wallet derives its viewing key its own way. Nothing breaks; the existing Lens registration architecture stands."}
+                {result.anyMatch
+                  ? "Report this before changing anything. It is a finding, not a decision."
+                  : "No match. Expected: a dapp cannot reproduce a key the wallet derived from the account private key, and if it could that would be a weakness in the wallet rather than a feature."}
               </p>
             </div>
           )}
